@@ -11,3 +11,6 @@ main.js
 
 # Obsidian
 data.json
+
+# Visual Studio
+.vs/
