@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-notes-explorer",
+	"name": "Notes Explorer",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "View and manage open notes as cards with drag-and-drop support",
+	"author": "aikruger",
+	"authorUrl": "https://github.com/aikruger",
+	"isDesktopOnly": false
+}
