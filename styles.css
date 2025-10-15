@@ -1,0 +1,132 @@
+/* Notes Explorer Card View Styles */
+
+.notes-explorer-view {
+    padding: 10px;
+    height: 100%;
+    overflow-y: auto;
+}
+
+.notes-explorer-cards-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 5px;
+}
+
+.notes-explorer-card {
+    position: relative;
+    width: 200px;
+    min-height: 150px;
+    padding: 15px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    background-color: var(--background-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.notes-explorer-card:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+    border-color: var(--interactive-accent);
+}
+
+.notes-explorer-card.dragging {
+    opacity: 0.5;
+    cursor: move;
+}
+
+.notes-explorer-card.drag-over {
+    border: 2px dashed var(--interactive-accent);
+    background-color: var(--background-secondary);
+}
+
+.notes-explorer-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.notes-explorer-card-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    flex: 1;
+    margin-right: 5px;
+}
+
+.notes-explorer-card-close {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: all 0.2s ease;
+}
+
+.notes-explorer-card-close:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-error);
+    opacity: 1;
+}
+
+.notes-explorer-card-content {
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    line-height: 1.4;
+}
+
+.notes-explorer-card.active {
+    border-color: var(--interactive-accent);
+    background-color: var(--background-primary-alt);
+    box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+}
+
+.notes-explorer-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 14px;
+    text-align: center;
+    padding: 20px;
+}
+
+.notes-explorer-drop-zone {
+    min-height: 100px;
+    border: 2px dashed var(--background-modifier-border);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    margin: 10px;
+    padding: 20px;
+    transition: all 0.2s ease;
+}
+
+.notes-explorer-drop-zone.active {
+    border-color: var(--interactive-accent);
+    background-color: var(--background-secondary);
+    color: var(--interactive-accent);
+}
