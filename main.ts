@@ -1,4 +1,5 @@
 import { App, ItemView, Plugin, TFile, WorkspaceLeaf, Notice, MarkdownRenderer, Component } from 'obsidian';
+import { NotesExplorerMenuView, VIEW_TYPE_NOTES_EXPLORER_MENU } from './menu-view';
 
 const VIEW_TYPE_NOTES_EXPLORER = "notes-explorer-view";
 
@@ -8,6 +9,12 @@ export default class NotesExplorerPlugin extends Plugin {
 		this.registerView(
 			VIEW_TYPE_NOTES_EXPLORER,
 			(leaf) => new NotesExplorerView(leaf)
+		);
+
+		// Register the menu view
+		this.registerView(
+			VIEW_TYPE_NOTES_EXPLORER_MENU,
+			(leaf) => new NotesExplorerMenuView(leaf, this)
 		);
 
 		// Add ribbon icon to open the view
@@ -67,6 +74,10 @@ export default class NotesExplorerPlugin extends Plugin {
 		// this.app.workspace.onLayoutReady(() => {
 		// 	this.activateView();
 		// });
+
+		this.app.workspace.onLayoutReady(() => {
+			this.activateMenuView();
+		});
 	}
 
 	async activateView() {
@@ -93,6 +104,25 @@ export default class NotesExplorerPlugin extends Plugin {
 		}
 	}
 
+	async activateMenuView() {
+		const { workspace } = this.app;
+		let leaf: WorkspaceLeaf | null = null;
+		const leaves = workspace.getLeavesOfType(VIEW_TYPE_NOTES_EXPLORER_MENU);
+
+		if (leaves.length > 0) {
+			leaf = leaves[0];
+		} else {
+			leaf = workspace.getRightLeaf(false);
+			if (leaf) {
+				await leaf.setViewState({ type: VIEW_TYPE_NOTES_EXPLORER_MENU, active: true });
+			}
+		}
+
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+		}
+	}
+
 	getNotesExplorerView(): NotesExplorerView | null {
 		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_NOTES_EXPLORER);
 		if (leaves.length > 0) {
@@ -102,7 +132,7 @@ export default class NotesExplorerPlugin extends Plugin {
 	}
 }
 
-class NotesExplorerView extends ItemView {
+export class NotesExplorerView extends ItemView {
 	public cardsContainer: HTMLElement;
 	private toolbar: HTMLElement;
 	public draggedCard: HTMLElement | null = null;
@@ -166,306 +196,34 @@ class NotesExplorerView extends ItemView {
 		this.registerEvent(this.app.workspace.on('notes-explorer:reset-layout', () => {
 			this.layoutMasonryGrid();
 		}));
-	}
 
-	getViewType(): string {
-		return VIEW_TYPE_NOTES_EXPLORER;
-	}
+		this.registerEvent(this.app.workspace.on('notes-explorer:show-hidden-modal', () => {
+			this.showHiddenCardsModal();
+		}));
 
-	getDisplayText(): string {
-		return "Notes Explorer";
-	}
+		this.registerEvent(this.app.workspace.on('notes-explorer:load-all-tabs', async () => {
+			const allLeaves = this.app.workspace.getLeavesOfType('markdown');
+			let loadedCount = 0;
 
-	getIcon(): string {
-		return "layout-grid";
-	}
+			for (const leaf of allLeaves) {
+				const parentView = (leaf.parent?.parent as any)?.view;
+				if (parentView && parentView.getViewType && parentView.getViewType() === 'canvas') {
+					continue;
+				}
 
-	async onOpen() {
-		const container = this.containerEl.children[1];
-		container.empty();
-		container.addClass('notes-explorer-view');
-
-		this.cardsContainer = container.createDiv({ cls: 'notes-explorer-cards-container' });
-
-		// Create drop indicator
-		this.dropIndicator = this.cardsContainer.createDiv({ cls: 'notes-explorer-drop-indicator' });
-		this.dropIndicator.style.display = 'none';
-
-		// Add resize observer for masonry layout
-		this.resizeObserver = new ResizeObserver(() => {
-			this.layoutMasonryGrid();
-		});
-		this.resizeObserver.observe(this.cardsContainer);
-
-		// Add auto-pan during drag operations
-		this.registerDomEvent(this.cardsContainer, 'dragover', (e: DragEvent) => {
-			this.handleAutoPan(e);
-		});
-
-		// Add click-outside handler to remove focused state
-		this.registerDomEvent(document, 'click', (e: MouseEvent) => {
-			const clickedCard = (e.target as HTMLElement).closest('.notes-explorer-card');
-			if (!clickedCard) {
-				// Clicked outside any card - remove all focused states
-				this.cardsContainer.querySelectorAll('.notes-explorer-card.focused').forEach((c) => {
-					c.removeClass('focused');
-				});
+				const file = (leaf.view as any).file;
+				if (file instanceof TFile && !this.hiddenCards.has(file.path)) {
+					this.app.workspace.setActiveLeaf(leaf, { focus: false });
+					loadedCount++;
+				}
 			}
-		});
 
-		// Listen to workspace changes to update the view
-		this.registerEvent(
-			this.app.workspace.on('active-leaf-change', () => {
-				this.debouncedUpdate();
-			})
-		);
+			await new Promise(resolve => setTimeout(resolve, 200));
 
-		this.registerEvent(
-			this.app.workspace.on('file-open', () => {
-				this.debouncedUpdate();
-			})
-		);
-
-		this.registerEvent(
-			this.app.workspace.on('layout-change', () => {
-				this.debouncedUpdate();
-			})
-		);
-
-		// Enable drop zone for files
-		this.setupDropZone();
-
-		// Setup tab-to-card highlighting
-		this.setupTabToCardHighlighting();
-
-		// Initial render
-		this.updateCards();
-	}
-
-	public debouncedUpdate() {
-		if (this.updateDebounceTimer !== null) {
-		window.clearTimeout(this.updateDebounceTimer);
-		}
-		this.updateDebounceTimer = window.setTimeout(() => {
 			this.updateCards();
-			this.updateDebounceTimer = null;
-		}, 100);
-	}
 
-	public setupDropZone() {
-		const container = this.containerEl.children[1];
-		
-		// Listen only to the container (not cardsContainer) to catch all drops
-		container.addEventListener('dragenter', (e: DragEvent) => {
-			// Check if this is a file from explorer (not our own card)
-			if (!this.draggedCard) {
-				e.preventDefault();
-				this.cardsContainer.addClass('drag-active');
-			}
-		});
-		
-		container.addEventListener('dragover', (e: DragEvent) => {
-			// Only handle if not dragging our own card
-			if (!this.draggedCard) {
-				e.preventDefault();
-				e.stopPropagation();
-				if (e.dataTransfer) {
-					e.dataTransfer.dropEffect = 'copy';
-				}
-			}
-		});
-		
-		container.addEventListener('dragleave', (e: DragEvent) => {
-			const rect = container.getBoundingClientRect();
-			const x = e.clientX;
-			const y = e.clientY;
-			
-			// Only remove highlight if mouse actually left the container
-			if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
-				this.cardsContainer.removeClass('drag-active');
-			}
-		});
-		
-		container.addEventListener('drop', async (e: DragEvent) => {
-			this.cardsContainer.removeClass('drag-active');
-			
-			// Only process if we're NOT dragging an internal card
-			if (!this.draggedCard) {
-				e.preventDefault();
-				e.stopPropagation();
-				
-				if (e.dataTransfer) {
-					// Obsidian's file explorer uses 'text/plain' with the file path
-					let filePath = e.dataTransfer.getData('text/plain');
-					
-					console.log('Drop detected, filePath:', filePath);
-					
-					if (filePath && filePath.trim() !== '') {
-						await this.handleFileDropped(filePath);
-					}
-				}
-			}
-		});
-	}
-
-	public async handleFileDropped(filePath: string) {
-		try {
-			// Clean and normalize the path
-			filePath = filePath.trim();
-			filePath = decodeURIComponent(filePath);
-			
-			console.log('Attempting to open file:', filePath);
-			
-			// Get all files in vault
-			const allFiles = this.app.vault.getMarkdownFiles();
-			
-			// Try exact match first
-			let file = allFiles.find(f => f.path === filePath);
-			
-			// Try without leading slash
-			if (!file && filePath.startsWith('/')) {
-				file = allFiles.find(f => f.path === filePath.substring(1));
-			}
-			
-			// Try adding .md extension
-			if (!file && !filePath.endsWith('.md')) {
-				file = allFiles.find(f => f.path === filePath + '.md');
-			}
-			
-			// Try basename match as last resort
-			if (!file) {
-				const basename = filePath.split('/').pop()?.replace(/\.md$/, '');
-				if (basename) {
-					file = allFiles.find(f => f.basename === basename);
-				}
-			}
-			
-			if (file) {
-				console.log('File found:', file.path);
-				
-				// Check if already open
-				const openFiles = this.getOpenFiles();
-				const existingInfo = openFiles.find(f => f.file.path === file!.path);
-				
-				if (existingInfo) {
-					new Notice(`${file.name} is already open`);
-					this.app.workspace.setActiveLeaf(existingInfo.leaf, { focus: false });
-				} else {
-					// Open in background tab
-					const newLeaf = this.app.workspace.getLeaf('tab');
-					await newLeaf.openFile(file, { active: false });
-					new Notice(`Opened ${file.name}`);
-					
-					// Update cards after brief delay
-					setTimeout(() => this.updateCards(), 200);
-				}
-			} else {
-				console.error('File not found:', filePath);
-				new Notice(`Could not find file: ${filePath}`);
-			}
-		} catch (error) {
-			console.error('Error in handleFileDropped:', error);
-			new Notice(`Failed to open file: ${(error as Error).message}`);
-		}
-	}
-	
-	public async updateCards() {
-		// Clean up any lingering highlights
-		document.querySelectorAll('.notes-explorer-highlight').forEach((el) => {
-			el.removeClass('notes-explorer-highlight');
-		});
-		
-		const openFiles = this.getOpenFiles();
-		
-		if (openFiles.length === 0) {
-			// Clean up old components
-			const oldCards = this.cardsContainer.querySelectorAll('.notes-explorer-card-content');
-			oldCards.forEach((contentEl: HTMLElement) => {
-				const component = (contentEl as any).component;
-				if (component) {
-					component.unload();
-				}
-			});
-			
-			this.cardsContainer.empty();
-			const emptyDiv = this.cardsContainer.createDiv({ cls: 'notes-explorer-empty' });
-			emptyDiv.setText('No notes are currently open. Open some notes to see them here.');
-			return;
-		}
-		
-		// Get existing cards to avoid recreating them
-		const existingCards = new Map<string, HTMLElement>();
-		const existingCardEls = this.cardsContainer.querySelectorAll('.notes-explorer-card');
-		
-		// Track duplicate detection
-		const pathCounts = new Map<string, number>();
-		
-		existingCardEls.forEach((cardEl) => {
-			const path = cardEl.getAttribute('data-path');
-			if (path) {
-				// Count occurrences
-				pathCounts.set(path, (pathCounts.get(path) || 0) + 1);
-				
-				// Only keep first occurrence
-				if (!existingCards.has(path)) {
-					existingCards.set(path, cardEl as HTMLElement);
-				} else {
-					// This is a duplicate - remove it immediately
-					console.log('Removing duplicate card for:', path);
-					const contentEl = cardEl.querySelector('.notes-explorer-card-content') as HTMLElement;
-					if (contentEl && (contentEl as any).component) {
-						(contentEl as any).component.unload();
-					}
-					cardEl.remove();
-				}
-			}
-		});
-		
-		// Log any duplicates found
-		for (const [path, count] of pathCounts) {
-			if (count > 1) {
-				console.warn(`Found ${count} duplicate cards for: ${path}`);
-			}
-		}
-		
-		// Determine which cards to keep, add, or remove
-		const currentPaths = new Set(openFiles.map(f => f.file.path));
-		const existingPaths = new Set(existingCards.keys());
-		
-		// Remove cards for closed files or files no longer in the list
-		for (const path of existingPaths) {
-			if (!currentPaths.has(path)) {
-				const cardEl = existingCards.get(path);
-				const contentEl = cardEl?.querySelector('.notes-explorer-card-content') as HTMLElement;
-				if (contentEl && (contentEl as any).component) {
-					(contentEl as any).component.unload();
-				}
-				cardEl?.remove();
-			}
-		}
-		
-		// Add new cards only (don't recreate existing ones)
-		for (const { file, leaf } of openFiles) {
-			if (!existingCards.has(file.path)) {
-				await this.createCard(file, leaf);
-			} else {
-				// Update active state for existing cards
-				const cardEl = existingCards.get(file.path);
-				const activeFile = this.app.workspace.getActiveFile();
-				if (cardEl) {
-					if (activeFile && activeFile.path === file.path) {
-						cardEl.addClass('active');
-					} else {
-						cardEl.removeClass('active');
-					}
-				}
-			}
-		}
-		
-		// Layout only once after all cards are ready
-		requestAnimationFrame(() => {
-			this.layoutMasonryGrid();
-		});
+			new Notice(`Loaded ${loadedCount} tabs as cards`);
+		}));
 	}
 
 	public applyZoom() {
@@ -536,6 +294,16 @@ class NotesExplorerView extends ItemView {
 		this.hiddenCards.add(path);
 		this.updateCards();
 		this.app.workspace.trigger('notes-explorer:hidden-cards-updated', this.hiddenCards.size);
+	}
+
+	public showCard(path: string) {
+		if (this.hiddenCards.has(path)) {
+			this.hiddenCards.delete(path);
+			this.updateCards();
+
+			// Update button text in menu view
+			this.app.workspace.trigger('notes-explorer:hidden-cards-updated', this.hiddenCards.size);
+		}
 	}
 
 	public applyColumns() {
@@ -792,17 +560,343 @@ class NotesExplorerView extends ItemView {
 		}
 	}
 
-	public showCard(path: string) {
-		if (this.hiddenCards.has(path)) {
-			this.hiddenCards.delete(path);
-			this.updateCards();
+	getViewType(): string {
+		return VIEW_TYPE_NOTES_EXPLORER;
+	}
 
-			// Update button text
-			const hiddenBtn = this.toolbar.querySelector('.notes-explorer-hidden-btn');
-			if (hiddenBtn) {
-				hiddenBtn.setText(`Hidden (${this.hiddenCards.size})`);
+	getDisplayText(): string {
+		return "Notes Explorer";
+	}
+
+	getIcon(): string {
+		return "layout-grid";
+	}
+
+	async onOpen() {
+		const container = this.containerEl.children[1];
+		container.empty();
+		container.addClass('notes-explorer-view');
+
+		this.cardsContainer = container.createDiv({ cls: 'notes-explorer-cards-container' });
+
+		// Create drop indicator
+		this.dropIndicator = this.cardsContainer.createDiv({ cls: 'notes-explorer-drop-indicator' });
+		this.dropIndicator.style.display = 'none';
+
+		// Add resize observer for masonry layout
+		this.resizeObserver = new ResizeObserver(() => {
+			this.layoutMasonryGrid();
+		});
+		this.resizeObserver.observe(this.cardsContainer);
+
+		// Add auto-pan during drag operations
+		this.registerDomEvent(this.cardsContainer, 'dragover', (e: DragEvent) => {
+			this.handleAutoPan(e);
+		});
+
+		// Add keyboard shortcuts for zoom
+		this.registerDomEvent(container as HTMLElement, 'keydown', (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=')) {
+				e.preventDefault();
+				this.zoomLevel = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
+				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
+				this.applyZoom();
+			}
+
+			if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+				e.preventDefault();
+				this.zoomLevel = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
+				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
+				this.applyZoom();
+			}
+
+			if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+				e.preventDefault();
+				this.zoomLevel = 1.0;
+				this.applyZoom();
+			}
+		});
+
+		// Add mouse wheel zoom with Ctrl/Cmd modifier
+		this.registerDomEvent(container as HTMLElement, 'wheel', (e: WheelEvent) => {
+			if (e.ctrlKey || e.metaKey) {
+				e.preventDefault();
+
+				if (e.deltaY < 0) {
+					this.zoomLevel = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
+				} else {
+					this.zoomLevel = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
+				}
+
+				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
+				this.applyZoom();
+			}
+		}, { passive: false });
+
+		// Add click-outside handler to remove focused state
+		this.registerDomEvent(document, 'click', (e: MouseEvent) => {
+			const clickedCard = (e.target as HTMLElement).closest('.notes-explorer-card');
+			if (!clickedCard) {
+				// Clicked outside any card - remove all focused states
+				this.cardsContainer.querySelectorAll('.notes-explorer-card.focused').forEach((c) => {
+					c.removeClass('focused');
+				});
+			}
+		});
+
+		// Listen to workspace changes to update the view
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', () => {
+				this.debouncedUpdate();
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on('file-open', () => {
+				this.debouncedUpdate();
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on('layout-change', () => {
+				this.debouncedUpdate();
+			})
+		);
+
+		// Enable drop zone for files
+		this.setupDropZone();
+
+		// Setup tab-to-card highlighting
+		this.setupTabToCardHighlighting();
+
+		// Initial render
+		this.updateCards();
+	}
+
+	public debouncedUpdate() {
+		if (this.updateDebounceTimer !== null) {
+		window.clearTimeout(this.updateDebounceTimer);
+		}
+		this.updateDebounceTimer = window.setTimeout(() => {
+			this.updateCards();
+			this.updateDebounceTimer = null;
+		}, 100);
+	}
+
+	public setupDropZone() {
+		const container = this.containerEl.children[1];
+
+		// Listen only to the container (not cardsContainer) to catch all drops
+		container.addEventListener('dragenter', (e: DragEvent) => {
+			// Check if this is a file from explorer (not our own card)
+			if (!this.draggedCard) {
+				e.preventDefault();
+				this.cardsContainer.addClass('drag-active');
+			}
+		});
+
+		container.addEventListener('dragover', (e: DragEvent) => {
+			// Only handle if not dragging our own card
+			if (!this.draggedCard) {
+				e.preventDefault();
+				e.stopPropagation();
+				if (e.dataTransfer) {
+					e.dataTransfer.dropEffect = 'copy';
+				}
+			}
+		});
+
+		container.addEventListener('dragleave', (e: DragEvent) => {
+			const rect = container.getBoundingClientRect();
+			const x = e.clientX;
+			const y = e.clientY;
+
+			// Only remove highlight if mouse actually left the container
+			if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+				this.cardsContainer.removeClass('drag-active');
+			}
+		});
+
+		container.addEventListener('drop', async (e: DragEvent) => {
+			this.cardsContainer.removeClass('drag-active');
+
+			// Only process if we're NOT dragging an internal card
+			if (!this.draggedCard) {
+				e.preventDefault();
+				e.stopPropagation();
+
+				if (e.dataTransfer) {
+					// Obsidian's file explorer uses 'text/plain' with the file path
+					let filePath = e.dataTransfer.getData('text/plain');
+
+					console.log('Drop detected, filePath:', filePath);
+
+					if (filePath && filePath.trim() !== '') {
+						await this.handleFileDropped(filePath);
+					}
+				}
+			}
+		});
+	}
+
+	public async handleFileDropped(filePath: string) {
+		try {
+			// Clean and normalize the path
+			filePath = filePath.trim();
+			filePath = decodeURIComponent(filePath);
+
+			console.log('Attempting to open file:', filePath);
+
+			// Get all files in vault
+			const allFiles = this.app.vault.getMarkdownFiles();
+
+			// Try exact match first
+			let file = allFiles.find(f => f.path === filePath);
+
+			// Try without leading slash
+			if (!file && filePath.startsWith('/')) {
+				file = allFiles.find(f => f.path === filePath.substring(1));
+			}
+
+			// Try adding .md extension
+			if (!file && !filePath.endsWith('.md')) {
+				file = allFiles.find(f => f.path === filePath + '.md');
+			}
+
+			// Try basename match as last resort
+			if (!file) {
+				const basename = filePath.split('/').pop()?.replace(/\.md$/, '');
+				if (basename) {
+					file = allFiles.find(f => f.basename === basename);
+				}
+			}
+
+			if (file) {
+				console.log('File found:', file.path);
+
+				// Check if already open
+				const openFiles = this.getOpenFiles();
+				const existingInfo = openFiles.find(f => f.file.path === file!.path);
+
+				if (existingInfo) {
+					new Notice(`${file.name} is already open`);
+					this.app.workspace.setActiveLeaf(existingInfo.leaf, { focus: false });
+				} else {
+					// Open in background tab
+					const newLeaf = this.app.workspace.getLeaf('tab');
+					await newLeaf.openFile(file, { active: false });
+					new Notice(`Opened ${file.name}`);
+
+					// Update cards after brief delay
+					setTimeout(() => this.updateCards(), 200);
+				}
+			} else {
+				console.error('File not found:', filePath);
+				new Notice(`Could not find file: ${filePath}`);
+			}
+		} catch (error) {
+			console.error('Error in handleFileDropped:', error);
+			new Notice(`Failed to open file: ${(error as Error).message}`);
+		}
+	}
+
+	public async updateCards() {
+		// Clean up any lingering highlights
+		document.querySelectorAll('.notes-explorer-highlight').forEach((el) => {
+			el.removeClass('notes-explorer-highlight');
+		});
+
+		const openFiles = this.getOpenFiles();
+
+		if (openFiles.length === 0) {
+			// Clean up old components
+			const oldCards = this.cardsContainer.querySelectorAll('.notes-explorer-card-content');
+			oldCards.forEach((contentEl: HTMLElement) => {
+				const component = (contentEl as any).component;
+				if (component) {
+					component.unload();
+				}
+			});
+
+			this.cardsContainer.empty();
+			const emptyDiv = this.cardsContainer.createDiv({ cls: 'notes-explorer-empty' });
+			emptyDiv.setText('No notes are currently open. Open some notes to see them here.');
+			return;
+		}
+
+		// Get existing cards to avoid recreating them
+		const existingCards = new Map<string, HTMLElement>();
+		const existingCardEls = this.cardsContainer.querySelectorAll('.notes-explorer-card');
+
+		// Track duplicate detection
+		const pathCounts = new Map<string, number>();
+
+		existingCardEls.forEach((cardEl) => {
+			const path = cardEl.getAttribute('data-path');
+			if (path) {
+				// Count occurrences
+				pathCounts.set(path, (pathCounts.get(path) || 0) + 1);
+
+				// Only keep first occurrence
+				if (!existingCards.has(path)) {
+					existingCards.set(path, cardEl as HTMLElement);
+				} else {
+					// This is a duplicate - remove it immediately
+					console.log('Removing duplicate card for:', path);
+					const contentEl = cardEl.querySelector('.notes-explorer-card-content') as HTMLElement;
+					if (contentEl && (contentEl as any).component) {
+						(contentEl as any).component.unload();
+					}
+					cardEl.remove();
+				}
+			}
+		});
+
+		// Log any duplicates found
+		for (const [path, count] of pathCounts) {
+			if (count > 1) {
+				console.warn(`Found ${count} duplicate cards for: ${path}`);
 			}
 		}
+
+		// Determine which cards to keep, add, or remove
+		const currentPaths = new Set(openFiles.map(f => f.file.path));
+		const existingPaths = new Set(existingCards.keys());
+
+		// Remove cards for closed files or files no longer in the list
+		for (const path of existingPaths) {
+			if (!currentPaths.has(path)) {
+				const cardEl = existingCards.get(path);
+				const contentEl = cardEl?.querySelector('.notes-explorer-card-content') as HTMLElement;
+				if (contentEl && (contentEl as any).component) {
+					(contentEl as any).component.unload();
+				}
+				cardEl?.remove();
+			}
+		}
+
+		// Add new cards only (don't recreate existing ones)
+		for (const { file, leaf } of openFiles) {
+			if (!existingCards.has(file.path)) {
+				await this.createCard(file, leaf);
+			} else {
+				// Update active state for existing cards
+				const cardEl = existingCards.get(file.path);
+				const activeFile = this.app.workspace.getActiveFile();
+				if (cardEl) {
+					if (activeFile && activeFile.path === file.path) {
+						cardEl.addClass('active');
+					} else {
+						cardEl.removeClass('active');
+					}
+				}
+			}
+		}
+
+		// Layout only once after all cards are ready
+		requestAnimationFrame(() => {
+			this.layoutMasonryGrid();
+		});
 	}
 
 	public getOpenFiles(): Array<{ file: TFile, leaf: WorkspaceLeaf }> {

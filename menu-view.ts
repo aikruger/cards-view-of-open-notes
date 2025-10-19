@@ -1,5 +1,5 @@
 import { App, ItemView, WorkspaceLeaf, Notice } from 'obsidian';
-import NotesExplorerPlugin from './main';
+import NotesExplorerPlugin, { NotesExplorerView } from './main';
 
 export const VIEW_TYPE_NOTES_EXPLORER_MENU = "notes-explorer-menu-view";
 
@@ -58,7 +58,7 @@ export class NotesExplorerMenuView extends ItemView {
         this.createLoadAllTabsControl(container, view);
     }
 
-    private createScaleControl(toolbar: HTMLElement, view: any) {
+    private createScaleControl(toolbar: HTMLElement, view: NotesExplorerView) {
 		const scaleContainer = toolbar.createDiv({ cls: 'notes-explorer-scale-control' });
 		scaleContainer.createEl('label', { text: 'Card Scale: ', cls: 'notes-explorer-scale-label' });
 		const slider = scaleContainer.createEl('input', { cls: 'notes-explorer-scale-slider', type: 'range' });
@@ -84,7 +84,7 @@ export class NotesExplorerMenuView extends ItemView {
 		});
 	}
 
-	private createColumnControl(toolbar: HTMLElement, view: any) {
+	private createColumnControl(toolbar: HTMLElement, view: NotesExplorerView) {
 		const columnContainer = toolbar.createDiv({ cls: 'notes-explorer-column-control' });
 		columnContainer.createEl('label', { text: 'Columns: ', cls: 'notes-explorer-column-label' });
 		const autoCheckbox = columnContainer.createEl('input', { type: 'checkbox', cls: 'notes-explorer-column-auto' });
@@ -114,7 +114,7 @@ export class NotesExplorerMenuView extends ItemView {
 		});
 	}
 
-	private createZoomControl(toolbar: HTMLElement, view: any) {
+	private createZoomControl(toolbar: HTMLElement, view: NotesExplorerView) {
 		const zoomContainer = toolbar.createDiv({ cls: 'notes-explorer-zoom-control' });
 		const zoomOutBtn = zoomContainer.createEl('button', { cls: 'notes-explorer-zoom-btn', title: 'Zoom Out' });
 		zoomOutBtn.innerHTML = '−';
@@ -145,7 +145,7 @@ export class NotesExplorerMenuView extends ItemView {
 		});
 	}
 
-	private createLayoutResetControl(toolbar: HTMLElement, view: any) {
+	private createLayoutResetControl(toolbar: HTMLElement, view: NotesExplorerView) {
 		const resetContainer = toolbar.createDiv({ cls: 'notes-explorer-layout-control' });
 		const resetBtn = resetContainer.createEl('button', {
 			text: 'Reset Layout',
@@ -158,7 +158,7 @@ export class NotesExplorerMenuView extends ItemView {
 		});
 	}
 
-	private createSortAndSearchControl(toolbar: HTMLElement, view: any) {
+	private createSortAndSearchControl(toolbar: HTMLElement, view: NotesExplorerView) {
 		const controlContainer = toolbar.createDiv({ cls: 'notes-explorer-sort-search-control' });
 		controlContainer.createEl('label', { text: 'Sort: ', cls: 'notes-explorer-sort-label' });
 		const sortSelect = controlContainer.createEl('select', { cls: 'notes-explorer-sort-select' });
@@ -194,7 +194,7 @@ export class NotesExplorerMenuView extends ItemView {
 		});
 	}
 
-	private createHiddenCardsControl(toolbar: HTMLElement, view: any) {
+	private createHiddenCardsControl(toolbar: HTMLElement, view: NotesExplorerView) {
 		const hiddenContainer = toolbar.createDiv({ cls: 'notes-explorer-hidden-control' });
 		const hiddenBtn = hiddenContainer.createEl('button', {
 			text: `Hidden (${view.hiddenCards.size})`,
@@ -205,7 +205,7 @@ export class NotesExplorerMenuView extends ItemView {
 		});
 	}
 
-	private createLoadAllTabsControl(toolbar: HTMLElement, view: any) {
+	private createLoadAllTabsControl(toolbar: HTMLElement, view: NotesExplorerView) {
 		const loadAllContainer = toolbar.createDiv({ cls: 'notes-explorer-load-all-control' });
 		const loadAllBtn = loadAllContainer.createEl('button', {
 			text: 'Load All Tabs',
