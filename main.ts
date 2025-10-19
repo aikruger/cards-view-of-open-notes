@@ -92,38 +92,80 @@ export default class NotesExplorerPlugin extends Plugin {
 			workspace.revealLeaf(leaf);
 		}
 	}
+
+	getNotesExplorerView(): NotesExplorerView | null {
+		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_NOTES_EXPLORER);
+		if (leaves.length > 0) {
+			return leaves[0].view as NotesExplorerView;
+		}
+		return null;
+	}
 }
 
 class NotesExplorerView extends ItemView {
 	public cardsContainer: HTMLElement;
 	private toolbar: HTMLElement;
-	private draggedCard: HTMLElement | null = null;
-	private draggedFile: TFile | null = null;
-	private draggedLeaf: WorkspaceLeaf | null = null;
-	private updateDebounceTimer: number | null = null;
-	private minCardHeight: number = 150;  // Minimum card height in pixels
-	private maxCardHeight: number = 500;  // Maximum card height in pixels
-	private baseFileSize: number = 5000;  // File size (in characters) that maps to maxCardHeight
-	private contentScale: number = 1.0;  // Scale property (1.0 = 100%, 0.5 = 50%, etc.)
-	private resizeObserver: ResizeObserver | null = null;  // Add resize observer
-	private stableCardOrder: Map<string, number> = new Map();  // Map of file.path -> order index
-	private orderCounter: number = 0;  // Counter for assigning stable order
-	private dropIndicator: HTMLElement | null = null;  // Drop position indicator
-	private dropPosition: string | null = null;  // 'top', 'right', 'bottom', 'left'
-	private manualColumns: number | null = null;  // null = auto, number = fixed columns
-	private cardWidth: number = 220;  // Base card width
-	private zoomLevel: number = 1.0;  // 1.0 = 100%, 0.5 = 50%, 1.5 = 150%, etc.
-	private minZoom: number = 0.5;
-	private maxZoom: number = 2.0;
-	private zoomStep: number = 0.1;
-	private sortMethod: string = 'manual';  // 'manual', 'name-asc', 'name-desc', 'size-asc', 'size-desc', 'modified'
-	private searchQuery: string = '';  // Search query for filtering cards
+	public draggedCard: HTMLElement | null = null;
+	public draggedFile: TFile | null = null;
+	public draggedLeaf: WorkspaceLeaf | null = null;
+	public updateDebounceTimer: number | null = null;
+	public minCardHeight: number = 150;  // Minimum card height in pixels
+	public maxCardHeight: number = 500;  // Maximum card height in pixels
+	public baseFileSize: number = 5000;  // File size (in characters) that maps to maxCardHeight
+	public contentScale: number = 1.0;  // Scale property (1.0 = 100%, 0.5 = 50%, etc.)
+	public resizeObserver: ResizeObserver | null = null;  // Add resize observer
+	public stableCardOrder: Map<string, number> = new Map();  // Map of file.path -> order index
+	public orderCounter: number = 0;  // Counter for assigning stable order
+	public dropIndicator: HTMLElement | null = null;  // Drop position indicator
+	public dropPosition: string | null = null;  // 'top', 'right', 'bottom', 'left'
+	public manualColumns: number | null = null;  // null = auto, number = fixed columns
+	public cardWidth: number = 220;  // Base card width
+	public zoomLevel: number = 1.0;  // 1.0 = 100%, 0.5 = 50%, 1.5 = 150%, etc.
+	public minZoom: number = 0.5;
+	public maxZoom: number = 2.0;
+	public zoomStep: number = 0.1;
+	public sortMethod: string = 'manual';  // 'manual', 'name-asc', 'name-desc', 'size-asc', 'size-desc', 'modified'
+	public searchQuery: string = '';  // Search query for filtering cards
 	public hiddenCards: Set<string> = new Set();  // Track hidden card paths
-	private customCardSizes: Map<string, {width: number, height: number}> = new Map(); // Map<filePath, {width, height}>
-	private tabObserver: MutationObserver | null = null;  // Observer for tab changes
+	public customCardSizes: Map<string, {width: number, height: number}> = new Map(); // Map<filePath, {width, height}>
+	public tabObserver: MutationObserver | null = null;  // Observer for tab changes
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
+
+		// Listen for custom events from the menu
+		this.registerEvent(this.app.workspace.on('notes-explorer:set-zoom', (newZoom: number) => {
+			this.zoomLevel = newZoom;
+			this.applyZoom();
+		}));
+
+		this.registerEvent(this.app.workspace.on('notes-explorer:set-scale', (newScale: number) => {
+			this.contentScale = newScale;
+			this.applyScaleToCards();
+		}));
+
+		this.registerEvent(this.app.workspace.on('notes-explorer:set-columns', (newColumns: number | null) => {
+			this.manualColumns = newColumns;
+			this.applyColumns();
+		}));
+
+		this.registerEvent(this.app.workspace.on('notes-explorer:set-sort', (newSort: string) => {
+			this.sortMethod = newSort;
+			this.updateCards();
+		}));
+
+		this.registerEvent(this.app.workspace.on('notes-explorer:set-search', (newSearch: string) => {
+			this.searchQuery = newSearch;
+			this.filterCards();
+		}));
+
+		this.registerEvent(this.app.workspace.on('notes-explorer:reload', () => {
+			this.updateCards();
+		}));
+
+		this.registerEvent(this.app.workspace.on('notes-explorer:reset-layout', () => {
+			this.layoutMasonryGrid();
+		}));
 	}
 
 	getViewType(): string {
@@ -143,30 +185,6 @@ class NotesExplorerView extends ItemView {
 		container.empty();
 		container.addClass('notes-explorer-view');
 
-		// Create toolbar container
-		this.toolbar = container.createDiv({ cls: 'notes-explorer-toolbar' });
-		
-		// Create scale control
-		this.createScaleControl(this.toolbar);
-		
-		// Create column control
-		this.createColumnControl(this.toolbar);
-		
-		// Create zoom control
-		this.createZoomControl(this.toolbar);
-		
-		// Create layout reset control
-		this.createLayoutResetControl(this.toolbar);
-		
-		// Create sort and search control
-		this.createSortAndSearchControl(this.toolbar);
-		
-		// Create hidden cards control
-		this.createHiddenCardsControl(this.toolbar);
-		
-		// Create load all tabs control
-		this.createLoadAllTabsControl(this.toolbar);
-
 		this.cardsContainer = container.createDiv({ cls: 'notes-explorer-cards-container' });
 
 		// Create drop indicator
@@ -178,70 +196,6 @@ class NotesExplorerView extends ItemView {
 			this.layoutMasonryGrid();
 		});
 		this.resizeObserver.observe(this.cardsContainer);
-
-		// Add keyboard shortcuts for zoom
-		this.registerDomEvent(container as HTMLElement, 'keydown', (e: KeyboardEvent) => {
-			// Ctrl/Cmd + Plus/Equals for zoom in
-			if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=')) {
-				e.preventDefault();
-				this.zoomLevel = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
-				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
-				const zoomDisplay = this.toolbar.querySelector('.notes-explorer-zoom-display');
-				if (zoomDisplay) {
-					zoomDisplay.setText(`${Math.round(this.zoomLevel * 100)}%`);
-				}
-				this.applyZoom();
-			}
-			
-			// Ctrl/Cmd + Minus for zoom out
-			if ((e.ctrlKey || e.metaKey) && e.key === '-') {
-				e.preventDefault();
-				this.zoomLevel = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
-				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
-				const zoomDisplay = this.toolbar.querySelector('.notes-explorer-zoom-display');
-				if (zoomDisplay) {
-					zoomDisplay.setText(`${Math.round(this.zoomLevel * 100)}%`);
-				}
-				this.applyZoom();
-			}
-			
-			// Ctrl/Cmd + 0 for reset zoom
-			if ((e.ctrlKey || e.metaKey) && e.key === '0') {
-				e.preventDefault();
-				this.zoomLevel = 1.0;
-				const zoomDisplay = this.toolbar.querySelector('.notes-explorer-zoom-display');
-				if (zoomDisplay) {
-					zoomDisplay.setText('100%');
-				}
-				this.applyZoom();
-			}
-		});
-
-		// Add mouse wheel zoom with Ctrl/Cmd modifier
-		this.registerDomEvent(container as HTMLElement, 'wheel', (e: WheelEvent) => {
-			// Only zoom if Ctrl/Cmd is held
-			if (e.ctrlKey || e.metaKey) {
-				e.preventDefault();
-				
-				// Determine zoom direction based on wheel delta
-				// Positive deltaY = scroll down = zoom out
-				// Negative deltaY = scroll up = zoom in
-				if (e.deltaY < 0) {
-					// Scroll up - zoom in
-					this.zoomLevel = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
-				} else {
-					// Scroll down - zoom out
-					this.zoomLevel = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
-				}
-				
-				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
-				const zoomDisplay = this.toolbar.querySelector('.notes-explorer-zoom-display');
-				if (zoomDisplay) {
-					zoomDisplay.setText(`${Math.round(this.zoomLevel * 100)}%`);
-				}
-				this.applyZoom();
-			}
-		}, { passive: false });
 
 		// Add auto-pan during drag operations
 		this.registerDomEvent(this.cardsContainer, 'dragover', (e: DragEvent) => {
@@ -288,7 +242,7 @@ class NotesExplorerView extends ItemView {
 		this.updateCards();
 	}
 
-	private debouncedUpdate() {
+	public debouncedUpdate() {
 		if (this.updateDebounceTimer !== null) {
 		window.clearTimeout(this.updateDebounceTimer);
 		}
@@ -298,7 +252,7 @@ class NotesExplorerView extends ItemView {
 		}, 100);
 	}
 
-	private setupDropZone() {
+	public setupDropZone() {
 		const container = this.containerEl.children[1];
 		
 		// Listen only to the container (not cardsContainer) to catch all drops
@@ -354,7 +308,7 @@ class NotesExplorerView extends ItemView {
 		});
 	}
 
-	private async handleFileDropped(filePath: string) {
+	public async handleFileDropped(filePath: string) {
 		try {
 			// Clean and normalize the path
 			filePath = filePath.trim();
@@ -415,7 +369,7 @@ class NotesExplorerView extends ItemView {
 		}
 	}
 	
-	private async updateCards() {
+	public async updateCards() {
 		// Clean up any lingering highlights
 		document.querySelectorAll('.notes-explorer-highlight').forEach((el) => {
 			el.removeClass('notes-explorer-highlight');
@@ -512,6 +466,343 @@ class NotesExplorerView extends ItemView {
 		requestAnimationFrame(() => {
 			this.layoutMasonryGrid();
 		});
+	}
+
+	public applyZoom() {
+		this.cardsContainer.style.transform = `scale(${this.zoomLevel})`;
+	}
+
+	public applyScaleToCards() {
+		const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card-content');
+		cards.forEach((content: HTMLElement) => {
+			content.style.transform = `scale(${this.contentScale})`;
+			content.style.transformOrigin = 'top left';
+		});
+	}
+
+	public layoutMasonryGrid() {
+		if (!this.cardsContainer) return;
+
+		const columnCount = this.manualColumns || Math.floor(this.cardsContainer.offsetWidth / (this.cardWidth + 10));
+		this.cardsContainer.style.setProperty('--notes-explorer-columns', columnCount.toString());
+
+		const cards = Array.from(this.cardsContainer.querySelectorAll('.notes-explorer-card')) as HTMLElement[];
+
+		cards.forEach(card => {
+			const content = card.querySelector('.notes-explorer-card-content') as HTMLElement;
+			if (content) {
+				const rowSpan = Math.ceil((content.offsetHeight + 40) / 10);
+				card.style.gridRowEnd = `span ${rowSpan}`;
+			}
+		});
+	}
+
+	public filterCards() {
+		const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card');
+		cards.forEach((card: HTMLElement) => {
+			const path = card.dataset.path;
+			if (path && path.toLowerCase().includes(this.searchQuery)) {
+				card.style.display = '';
+			} else {
+				card.style.display = 'none';
+			}
+		});
+		this.layoutMasonryGrid();
+	}
+
+	public handleAutoPan(e: DragEvent) {
+		const container = this.cardsContainer;
+		const scrollSpeed = 15;
+		const threshold = 50; // pixels from edge
+
+		const rect = container.getBoundingClientRect();
+		const x = e.clientX;
+		const y = e.clientY;
+
+		if (x < rect.left + threshold) {
+			container.scrollLeft -= scrollSpeed;
+		} else if (x > rect.right - threshold) {
+			container.scrollLeft += scrollSpeed;
+		}
+
+		if (y < rect.top + threshold) {
+			container.scrollTop -= scrollSpeed;
+		} else if (y > rect.bottom - threshold) {
+			container.scrollTop += scrollSpeed;
+		}
+	}
+
+	public hideCard(path: string) {
+		this.hiddenCards.add(path);
+		this.updateCards();
+		this.app.workspace.trigger('notes-explorer:hidden-cards-updated', this.hiddenCards.size);
+	}
+
+	public applyColumns() {
+		this.layoutMasonryGrid();
+	}
+
+	async createCard(file: TFile, leaf: WorkspaceLeaf, prepend: boolean = false) {
+		const card = this.cardsContainer.createDiv({ cls: 'notes-explorer-card' });
+		card.setAttribute('data-path', file.path);
+
+		// Draggable attribute
+		card.setAttribute('draggable', 'true');
+
+		// Add stable order attribute for manual sorting
+		if (!this.stableCardOrder.has(file.path)) {
+			this.stableCardOrder.set(file.path, this.orderCounter++);
+		}
+		card.style.order = (this.stableCardOrder.get(file.path) ?? 0).toString();
+
+		// Set active state
+		const activeFile = this.app.workspace.getActiveFile();
+		if (activeFile && activeFile.path === file.path) {
+			card.addClass('active');
+		}
+
+		// Header
+		const header = card.createDiv({ cls: 'notes-explorer-card-header' });
+
+		// Click to focus tab
+		header.addEventListener('click', () => {
+			this.app.workspace.setActiveLeaf(leaf, { focus: true });
+		});
+
+		// Title
+		header.createDiv({
+			cls: 'notes-explorer-card-title',
+			text: file.basename
+		});
+
+		// Controls (close button)
+		const controls = header.createDiv({ cls: 'notes-explorer-card-controls' });
+
+		const hideBtn = controls.createDiv({ cls: 'notes-explorer-card-control' });
+		hideBtn.setAttribute('aria-label', 'Hide card');
+		hideBtn.innerHTML = 'H'; // Hide icon
+		hideBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.hideCard(file.path);
+		});
+
+		const closeBtn = controls.createDiv({ cls: 'notes-explorer-card-control' });
+		closeBtn.setAttribute('aria-label', 'Close note');
+		closeBtn.innerHTML = '×'; // Close icon
+		closeBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			leaf.detach(); // Close the tab
+			this.updateCards();
+		});
+
+		// Content
+		const content = card.createDiv({ cls: 'notes-explorer-card-content' });
+
+		// Attach a component for proper lifecycle management
+		const component = new Component();
+		(content as any).component = component;
+
+		try {
+			// Get file content
+			const fileContent = await this.app.vault.cachedRead(file);
+
+			// Render markdown content
+			await MarkdownRenderer.render(this.app, fileContent, content, file.path, component);
+
+			// Load all sub-components (e.g., embeds, code blocks)
+			component.load();
+		} catch (e) {
+			content.setText(`Error loading content: ${e}`);
+		}
+
+		// Calculate height and apply scale
+		const fileSize = (await this.app.vault.cachedRead(file)).length;
+		const height = this.calculateCardHeight(fileSize);
+		card.style.height = `${height}px`;
+		content.style.transform = `scale(${this.contentScale})`;
+		content.style.transformOrigin = 'top left';
+
+		// Custom resizer
+		const resizer = card.createDiv({ cls: 'notes-explorer-card-resizer' });
+		let isResizing = false;
+		let startX: number, startY: number, startWidth: number, startHeight: number;
+
+		resizer.addEventListener('mousedown', (e: MouseEvent) => {
+			isResizing = true;
+			startX = e.clientX;
+			startY = e.clientY;
+			startWidth = card.offsetWidth;
+			startHeight = card.offsetHeight;
+
+			document.addEventListener('mousemove', onMouseMove);
+			document.addEventListener('mouseup', onMouseUp);
+		});
+
+		const onMouseMove = (e: MouseEvent) => {
+			if (!isResizing) return;
+			const dx = e.clientX - startX;
+			const dy = e.clientY - startY;
+
+			card.style.width = `${startWidth + dx}px`;
+			card.style.height = `${startHeight + dy}px`;
+
+			// Disable masonry layout while resizing
+			this.cardsContainer.style.gridTemplateRows = 'auto';
+		};
+
+		const onMouseUp = () => {
+			isResizing = false;
+			document.removeEventListener('mousemove', onMouseMove);
+			document.removeEventListener('mouseup', onMouseUp);
+
+			// Store custom size
+			this.customCardSizes.set(file.path, {
+				width: card.offsetWidth,
+				height: card.offsetHeight
+			});
+
+			// Re-enable masonry layout after slight delay
+			setTimeout(() => {
+				this.layoutMasonryGrid();
+			}, 100);
+		};
+
+		// Drag and drop handling
+		card.addEventListener('dragstart', (e: DragEvent) => {
+			if (e.dataTransfer) {
+				e.dataTransfer.effectAllowed = 'move';
+				e.dataTransfer.setData('text/plain', file.path);
+			}
+			this.draggedCard = card;
+			this.draggedFile = file;
+			this.draggedLeaf = leaf;
+			card.addClass('dragging');
+			this.cardsContainer.addClass('card-dragging');
+		});
+
+		card.addEventListener('dragend', () => {
+			this.draggedCard?.removeClass('dragging');
+			this.draggedCard = null;
+			this.draggedFile = null;
+			this.draggedLeaf = null;
+			this.cardsContainer.removeClass('card-dragging');
+			this.dropIndicator!.style.display = 'none';
+		});
+
+		card.addEventListener('dragover', (e: DragEvent) => {
+			e.preventDefault();
+			if (this.draggedCard && this.draggedCard !== card) {
+				const rect = card.getBoundingClientRect();
+				const x = e.clientX - rect.left;
+				const y = e.clientY - rect.top;
+
+				const dropThreshold = 0.25; // 25% of the card's dimension
+
+				// Default to horizontal (left/right) if card is wider than tall
+				let isWider = card.offsetWidth > card.offsetHeight;
+
+				if (x < rect.width * dropThreshold) {
+					this.dropPosition = 'left';
+					this.dropIndicator!.style.display = 'block';
+					this.dropIndicator!.style.left = `${card.offsetLeft}px`;
+					this.dropIndicator!.style.top = `${card.offsetTop}px`;
+					this.dropIndicator!.style.width = '4px';
+					this.dropIndicator!.style.height = `${card.offsetHeight}px`;
+				} else if (x > rect.width * (1 - dropThreshold)) {
+					this.dropPosition = 'right';
+					this.dropIndicator!.style.display = 'block';
+					this.dropIndicator!.style.left = `${card.offsetLeft + card.offsetWidth - 4}px`;
+					this.dropIndicator!.style.top = `${card.offsetTop}px`;
+					this.dropIndicator!.style.width = '4px';
+					this.dropIndicator!.style.height = `${card.offsetHeight}px`;
+				} else if (y < rect.height * dropThreshold) {
+					this.dropPosition = 'top';
+					this.dropIndicator!.style.display = 'block';
+					this.dropIndicator!.style.left = `${card.offsetLeft}px`;
+					this.dropIndicator!.style.top = `${card.offsetTop}px`;
+					this.dropIndicator!.style.width = `${card.offsetWidth}px`;
+					this.dropIndicator!.style.height = '4px';
+				} else if (y > rect.height * (1 - dropThreshold)) {
+					this.dropPosition = 'bottom';
+					this.dropIndicator!.style.display = 'block';
+					this.dropIndicator!.style.left = `${card.offsetLeft}px`;
+					this.dropIndicator!.style.top = `${card.offsetTop + card.offsetHeight - 4}px`;
+					this.dropIndicator!.style.width = `${card.offsetWidth}px`;
+					this.dropIndicator!.style.height = '4px';
+				} else {
+					this.dropPosition = null;
+					this.dropIndicator!.style.display = 'none';
+				}
+			}
+		});
+
+		card.addEventListener('drop', (e: DragEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+
+			if (this.draggedCard && this.draggedCard !== card) {
+				const draggedOrder = this.stableCardOrder.get(this.draggedFile!.path)!;
+				const targetOrder = this.stableCardOrder.get(file.path)!;
+
+				// Update order values for all affected cards
+				for (const [path, order] of this.stableCardOrder.entries()) {
+					if (draggedOrder < targetOrder) { // Dragged down
+						if (order > draggedOrder && order <= targetOrder) {
+							this.stableCardOrder.set(path, order - 1);
+						}
+					} else { // Dragged up
+						if (order < draggedOrder && order >= targetOrder) {
+							this.stableCardOrder.set(path, order + 1);
+						}
+					}
+				}
+
+				// Place the dragged card at the target position
+				this.stableCardOrder.set(this.draggedFile!.path, targetOrder);
+
+				// Update card order styles
+				this.cardsContainer.querySelectorAll('.notes-explorer-card').forEach((c: HTMLElement) => {
+					const path = c.dataset.path;
+					if (path && this.stableCardOrder.has(path)) {
+						c.style.order = (this.stableCardOrder.get(path) ?? 0).toString();
+					}
+				});
+
+				// Re-sort and re-layout
+				this.updateCards();
+			}
+
+			this.dropIndicator!.style.display = 'none';
+		});
+
+		// Focus on click
+		card.addEventListener('click', (e: MouseEvent) => {
+			// Remove 'focused' from all other cards
+			this.cardsContainer.querySelectorAll('.notes-explorer-card.focused').forEach((c) => {
+				c.removeClass('focused');
+			});
+			// Add 'focused' to the clicked card
+			card.addClass('focused');
+		});
+
+		if (prepend) {
+			this.cardsContainer.prepend(card);
+		} else {
+			this.cardsContainer.appendChild(card);
+		}
+	}
+
+	public showCard(path: string) {
+		if (this.hiddenCards.has(path)) {
+			this.hiddenCards.delete(path);
+			this.updateCards();
+
+			// Update button text
+			const hiddenBtn = this.toolbar.querySelector('.notes-explorer-hidden-btn');
+			if (hiddenBtn) {
+				hiddenBtn.setText(`Hidden (${this.hiddenCards.size})`);
+			}
+		}
 	}
 
 	public getOpenFiles(): Array<{ file: TFile, leaf: WorkspaceLeaf }> {
@@ -622,7 +913,7 @@ class NotesExplorerView extends ItemView {
 		return openFiles;
 	}
 
-	private calculateCardHeight(fileSize: number): number {
+	public calculateCardHeight(fileSize: number): number {
 		// fileSize is in characters
 		// Calculate height as a percentage of file size relative to baseFileSize
 		const heightPercentage = Math.min(fileSize / this.baseFileSize, 1.0);
@@ -632,299 +923,6 @@ class NotesExplorerView extends ItemView {
 			(this.maxCardHeight - this.minCardHeight) * heightPercentage;
 		
 		return Math.floor(calculatedHeight);
-	}
-
-	private createScaleControl(toolbar: HTMLElement) {
-		const scaleContainer = toolbar.createDiv({ cls: 'notes-explorer-scale-control' });
-		
-		// Label
-		const label = scaleContainer.createEl('label', { 
-			text: 'Card Scale: ',
-			cls: 'notes-explorer-scale-label'
-		});
-		
-		// Slider
-		const slider = scaleContainer.createEl('input', {
-			cls: 'notes-explorer-scale-slider',
-			type: 'range'
-		});
-		slider.min = '0.5';
-		slider.max = '1.0';
-		slider.step = '0.1';
-		slider.value = this.contentScale.toString();
-		
-		// Value display
-		const valueDisplay = scaleContainer.createEl('span', {
-			text: `${Math.round(this.contentScale * 100)}%`,
-			cls: 'notes-explorer-scale-value'
-		});
-		
-		// Slider event handler
-		slider.addEventListener('input', (e: Event) => {
-			const target = e.target as HTMLInputElement;
-			this.contentScale = parseFloat(target.value);
-			valueDisplay.setText(`${Math.round(this.contentScale * 100)}%`);
-			this.applyScaleToCards();
-		});
-		
-		// Reset button
-		const resetBtn = scaleContainer.createEl('button', {
-			text: 'Reset',
-			cls: 'notes-explorer-scale-reset'
-		});
-		resetBtn.addEventListener('click', () => {
-			this.contentScale = 1.0;
-			slider.value = '1.0';
-			valueDisplay.setText('100%');
-			this.applyScaleToCards();
-		});
-	}
-
-	private createColumnControl(toolbar: HTMLElement) {
-		const columnContainer = toolbar.createDiv({ cls: 'notes-explorer-column-control' });
-		
-		// Label
-		const label = columnContainer.createEl('label', { 
-			text: 'Columns: ',
-			cls: 'notes-explorer-column-label'
-		});
-		
-		// Auto/Manual toggle
-		const autoCheckbox = columnContainer.createEl('input', {
-			type: 'checkbox',
-			cls: 'notes-explorer-column-auto'
-		});
-		autoCheckbox.checked = this.manualColumns === null;
-		autoCheckbox.id = 'column-auto';
-		
-		const autoLabel = columnContainer.createEl('label', {
-			text: 'Auto',
-			cls: 'notes-explorer-column-auto-label'
-		});
-		autoLabel.setAttribute('for', 'column-auto');
-		
-		// Number input for manual columns
-		const columnInput = columnContainer.createEl('input', {
-			type: 'number',
-			cls: 'notes-explorer-column-input'
-		});
-		columnInput.min = '1';
-		columnInput.max = '20';
-		columnInput.value = this.manualColumns ? this.manualColumns.toString() : '3';
-		columnInput.disabled = this.manualColumns === null;
-		
-		// Auto checkbox event
-		autoCheckbox.addEventListener('change', () => {
-			if (autoCheckbox.checked) {
-				this.manualColumns = null;
-				columnInput.disabled = true;
-				this.layoutMasonryGrid();
-			} else {
-				this.manualColumns = parseInt(columnInput.value);
-				columnInput.disabled = false;
-				this.layoutMasonryGrid();
-			}
-		});
-		
-		// Column input event
-		columnInput.addEventListener('input', () => {
-			const value = parseInt(columnInput.value);
-			if (value > 0 && value <= 20) {
-				this.manualColumns = value;
-				this.layoutMasonryGrid();
-			}
-		});
-	}
-
-	private createZoomControl(toolbar: HTMLElement) {
-		const zoomContainer = toolbar.createDiv({ cls: 'notes-explorer-zoom-control' });
-		
-		// Zoom out button
-		const zoomOutBtn = zoomContainer.createEl('button', {
-			cls: 'notes-explorer-zoom-btn',
-			title: 'Zoom Out'
-		});
-		zoomOutBtn.innerHTML = '−'; // Minus sign
-		
-		// Zoom level display
-		const zoomDisplay = zoomContainer.createEl('span', {
-			text: '100%',
-			cls: 'notes-explorer-zoom-display'
-		});
-		
-		// Zoom in button
-		const zoomInBtn = zoomContainer.createEl('button', {
-			cls: 'notes-explorer-zoom-btn',
-			title: 'Zoom In'
-		});
-		zoomInBtn.innerHTML = '+'; // Plus sign
-		
-		// Reset zoom button
-		const zoomResetBtn = zoomContainer.createEl('button', {
-			text: 'Reset',
-			cls: 'notes-explorer-zoom-reset',
-			title: 'Reset Zoom to 100%'
-		});
-		
-		// Zoom out event
-		zoomOutBtn.addEventListener('click', () => {
-			this.zoomLevel = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
-			this.zoomLevel = Math.round(this.zoomLevel * 10) / 10; // Round to 1 decimal
-			zoomDisplay.setText(`${Math.round(this.zoomLevel * 100)}%`);
-			this.applyZoom();
-		});
-		
-		// Zoom in event
-		zoomInBtn.addEventListener('click', () => {
-			this.zoomLevel = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
-			this.zoomLevel = Math.round(this.zoomLevel * 10) / 10; // Round to 1 decimal
-			zoomDisplay.setText(`${Math.round(this.zoomLevel * 100)}%`);
-			this.applyZoom();
-		});
-		
-		// Reset zoom event
-		zoomResetBtn.addEventListener('click', () => {
-			this.zoomLevel = 1.0;
-			zoomDisplay.setText('100%');
-			this.applyZoom();
-		});
-	}
-
-	private createLayoutResetControl(toolbar: HTMLElement) {
-		const resetContainer = toolbar.createDiv({ cls: 'notes-explorer-layout-control' });
-		
-		const resetBtn = resetContainer.createEl('button', {
-			text: 'Reset Layout',
-			cls: 'notes-explorer-layout-reset',
-			title: 'Reset to masonry layout'
-		});
-		
-		resetBtn.addEventListener('click', () => {
-			new Notice('Layout reset to masonry');
-			this.layoutMasonryGrid();
-		});
-	}
-
-	private createSortAndSearchControl(toolbar: HTMLElement) {
-		const controlContainer = toolbar.createDiv({ cls: 'notes-explorer-sort-search-control' });
-		
-		// Sort dropdown
-		const sortLabel = controlContainer.createEl('label', {
-			text: 'Sort: ',
-			cls: 'notes-explorer-sort-label'
-		});
-		
-		const sortSelect = controlContainer.createEl('select', {
-			cls: 'notes-explorer-sort-select'
-		});
-		
-		const sortOptions = [
-			{ value: 'manual', label: 'Manual Order' },
-			{ value: 'name-asc', label: 'Name (A-Z)' },
-			{ value: 'name-desc', label: 'Name (Z-A)' },
-			{ value: 'size-asc', label: 'Size (Small to Large)' },
-			{ value: 'size-desc', label: 'Size (Large to Small)' },
-			{ value: 'modified', label: 'Recently Modified' }
-		];
-		
-		sortOptions.forEach(opt => {
-			const option = sortSelect.createEl('option', {
-				value: opt.value,
-				text: opt.label
-			});
-			if (opt.value === this.sortMethod) {
-			 option.selected = true;
-			}
-		});
-		
-		sortSelect.addEventListener('change', () => {
-			this.sortMethod = sortSelect.value;
-			this.updateCards();
-		});
-		
-		// Search input
-		const searchLabel = controlContainer.createEl('label', {
-			text: 'Search: ',
-			cls: 'notes-explorer-search-label'
-		});
-		
-		const searchInput = controlContainer.createEl('input', {
-			type: 'text',
-			cls: 'notes-explorer-search-input',
-			placeholder: 'Filter cards...'
-		});
-		
-		searchInput.value = this.searchQuery;
-		
-		searchInput.addEventListener('input', () => {
-			this.searchQuery = searchInput.value.toLowerCase();
-			this.filterCards();
-		});
-		
-		// Clear search button
-		const clearBtn = controlContainer.createEl('button', {
-			text: '×',
-			cls: 'notes-explorer-search-clear',
-			title: 'Clear search'
-		});
-		
-		clearBtn.addEventListener('click', () => {
-			searchInput.value = '';
-			this.searchQuery = '';
-			this.filterCards();
-		});
-	}
-
-	private createHiddenCardsControl(toolbar: HTMLElement) {
-		const hiddenContainer = toolbar.createDiv({ cls: 'notes-explorer-hidden-control' });
-		
-		const hiddenBtn = hiddenContainer.createEl('button', {
-			text: `Hidden (${this.hiddenCards.size})`,
-			cls: 'notes-explorer-hidden-btn'
-		});
-		
-		hiddenBtn.addEventListener('click', () => {
-			// Show modal with list of hidden cards
-			this.showHiddenCardsModal();
-		});
-	}
-
-	private createLoadAllTabsControl(toolbar: HTMLElement) {
-		const loadAllContainer = toolbar.createDiv({ cls: 'notes-explorer-load-all-control' });
-		
-		const loadAllBtn = loadAllContainer.createEl('button', {
-			text: 'Load All Tabs',
-			cls: 'notes-explorer-load-all-btn',
-			title: 'Force load all open tabs as cards'
-		});
-		
-		loadAllBtn.addEventListener('click', async () => {
-			const allLeaves = this.app.workspace.getLeavesOfType('markdown');
-			let loadedCount = 0;
-			
-			for (const leaf of allLeaves) {
-				// Skip canvas leaves
-				const parentView = (leaf.parent?.parent as any)?.view;
-				if (parentView && parentView.getViewType && parentView.getViewType() === 'canvas') {
-					continue;
-				}
-				
-				const file = (leaf.view as any).file;
-				if (file instanceof TFile && !this.hiddenCards.has(file.path)) {
-					// Briefly activate each leaf to ensure it's fully loaded
-					this.app.workspace.setActiveLeaf(leaf, { focus: false });
-					loadedCount++;
-				}
-			}
-			
-			// Wait briefly for all leaves to settle
-			await new Promise(resolve => setTimeout(resolve, 200));
-			
-			// Force complete card refresh
-			this.updateCards();
-			
-			new Notice(`Loaded ${loadedCount} tabs as cards`);
-		});
 	}
 
 	private showHiddenCardsModal() {
@@ -973,7 +971,7 @@ class NotesExplorerView extends ItemView {
 		modal.open();
 	}
 
-	private setupTabToCardHighlighting() {
+	public setupTabToCardHighlighting() {
 		// Use MutationObserver to detect new tabs being added
 		const observer = new MutationObserver(() => {
 			this.attachTabHoverListeners();
@@ -991,7 +989,7 @@ class NotesExplorerView extends ItemView {
 		this.tabObserver = observer;
 	}
 
-	private attachTabHoverListeners() {
+	public attachTabHoverListeners() {
 		const tabHeaders = document.querySelectorAll('.workspace-tab-header');
 		
 		tabHeaders.forEach((tabHeader: Element) => {
@@ -1012,7 +1010,7 @@ class NotesExplorerView extends ItemView {
 		});
 	}
 
-	private highlightCorrespondingCard(tabHeader: HTMLElement, highlight: boolean) {
+	public highlightCorrespondingCard(tabHeader: HTMLElement, highlight: boolean) {
 		try {
 			// Get file path from tab
 			const tabTitle = tabHeader.getAttribute('aria-label');

@@ -8,22 +8,29 @@
     flex-direction: column;
 }
 
-/* Toolbar styles */
-.notes-explorer-toolbar {
+.notes-explorer-menu-view {
+    padding: 10px;
+}
+
+.notes-explorer-menu-container {
     display: flex;
-    align-items: center;
-    padding: 10px 15px;
-    background-color: var(--background-secondary);
-    border-bottom: 1px solid var(--background-modifier-border);
-    gap: 0; /* Remove gap, controls have their own padding */
-    margin: -10px -10px 10px -10px;
-    flex-wrap: wrap; /* Allow wrapping on smaller screens */
+    flex-direction: column;
+    gap: 15px;
+}
+
+.missing-view-message {
+    text-align: center;
+}
+
+.missing-view-message button {
+    margin-top: 10px;
 }
 
 .notes-explorer-scale-control {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
 }
 
 .notes-explorer-scale-label {
@@ -33,39 +40,25 @@
 }
 
 .notes-explorer-scale-slider {
-    width: 150px;
+    width: 100%;
     cursor: pointer;
 }
 
 .notes-explorer-scale-value {
     font-size: 12px;
     color: var(--text-muted);
-    min-width: 40px;
-    text-align: right;
 }
 
 .notes-explorer-scale-reset {
-    padding: 4px 12px;
+    padding: 4px 8px;
     font-size: 11px;
-    border: 1px solid var(--background-modifier-border);
-    background-color: var(--background-primary);
-    color: var(--text-normal);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.notes-explorer-scale-reset:hover {
-    background-color: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
 }
 
 .notes-explorer-column-control {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-left: 15px;
-    border-left: 1px solid var(--background-modifier-border);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
 }
 
 .notes-explorer-column-label {
@@ -102,10 +95,9 @@
 
 .notes-explorer-zoom-control {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-left: 15px;
-    border-left: 1px solid var(--background-modifier-border);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
 }
 
 .notes-explorer-zoom-btn {
@@ -560,34 +552,20 @@
 }
 
 .notes-explorer-layout-control {
-    padding-left: 15px;
-    border-left: 1px solid var(--background-modifier-border);
+    width: 100%;
 }
 
 .notes-explorer-layout-reset {
+    width: 100%;
     padding: 6px 14px;
     font-size: 12px;
-    border: 1px solid var(--background-modifier-border);
-    background-color: var(--background-primary);
-    color: var(--text-normal);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-weight: 500;
-}
-
-.notes-explorer-layout-reset:hover {
-    background-color: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
 }
 
 .notes-explorer-sort-search-control {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-left: 15px;
-    border-left: 1px solid var(--background-modifier-border);
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
 }
 
 .notes-explorer-sort-label,
