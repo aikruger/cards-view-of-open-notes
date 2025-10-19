@@ -150,11 +150,11 @@
 }
 
 .notes-explorer-cards-container {
-  flex: 1;
   position: relative;
+  overflow: auto;     /* allow both axes to scroll if needed */
+  width: 100%;        /* base width, overridden by JS when zoomed */
+  height: 100%;       /* base height */
   padding: 10px;
-  overflow-y: auto;
-  overflow-x: auto; /* Enable horizontal scrolling */
 }
 
 .notes-explorer-cards-container.drag-active {

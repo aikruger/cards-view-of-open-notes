@@ -230,16 +230,27 @@ export class NotesExplorerView extends ItemView {
 	}
 
 	public applyZoom() {
+		// Always prevent browser default zoom
+		const root = this.containerEl.children[1] || this.containerEl;
+		// Use CSS transform on the inner cards container only
 		this.cardsContainer.style.transform = `scale(${this.zoomLevel})`;
+		this.cardsContainer.style.transformOrigin = "top left";
+		// Expand the container’s width & height to preserve layout
+		this.cardsContainer.style.width = `${100 / this.zoomLevel}%`;
+		this.cardsContainer.style.height = `${100 / this.zoomLevel}%`;
 		this.app.workspace.trigger('notes-explorer:zoom-changed', this.zoomLevel);
 	}
 
 	public applyScaleToCards() {
-		const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card-content');
-		cards.forEach((content: HTMLElement) => {
-			content.style.transform = `scale(${this.contentScale})`;
-			content.style.transformOrigin = 'top left';
+		const cards = this.cardsContainer.querySelectorAll(
+			".notes-explorer-card"
+		) as NodeListOf<HTMLElement>;
+		cards.forEach(card => {
+			card.style.transform = `scale(${this.contentScale})`;
+			card.style.transformOrigin = "top left";
 		});
+		// After scaling, recompute masonry layout
+		requestAnimationFrame(() => this.layoutMasonryGrid());
 	}
 
 	public layoutMasonryGrid() {
@@ -416,8 +427,6 @@ export class NotesExplorerView extends ItemView {
 		const fileSize = (await this.app.vault.cachedRead(file)).length;
 		const height = this.calculateCardHeight(fileSize);
 		card.style.height = `${height}px`;
-		content.style.transform = `scale(${this.contentScale})`;
-		content.style.transformOrigin = 'top left';
 
 		// Custom resizer
 		const resizer = card.createDiv({ cls: 'notes-explorer-card-resizer' });
