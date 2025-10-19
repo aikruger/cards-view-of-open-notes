@@ -237,17 +237,17 @@ export class NotesExplorerView extends ItemView {
 	}
 
 	public applyScaleToCards() {
-		// First, lay out the cards using their unscaled dimensions
-		this.layoutMasonryGrid();
-
-		// Then, apply the visual scaling transform to each card
 		const cards = this.cardsContainer.querySelectorAll(".notes-explorer-card") as NodeListOf<HTMLElement>;
 		const combinedScale = this.zoomLevel * this.contentScale;
 
+		// Apply the scale transform to each card so we can measure its new size
 		cards.forEach(card => {
 			card.style.transform = `scale(${combinedScale})`;
 			card.style.transformOrigin = "top left";
 		});
+
+		// NOW, run the layout logic which will read the new scaled dimensions
+		requestAnimationFrame(() => this.layoutMasonryGrid());
 	}
 
 	public layoutMasonryGrid() {
@@ -257,41 +257,43 @@ export class NotesExplorerView extends ItemView {
 			this.cardsContainer.querySelectorAll('.notes-explorer-card')
 		) as HTMLElement[];
 
-		if (cards.length === 0) return;
+		if (cards.length === 0) {
+			this.cardsContainer.style.height = '0px'; // Reset height if no cards
+			return;
+		}
 
 		const containerWidth = this.cardsContainer.clientWidth;
-		const baseCardWidth = this.cardWidth;
 		const gap = 10;
 
-		// Determine number of columns based on unscaled widths
-		const columnCount = this.manualColumns ||
-			Math.max(1, Math.floor(containerWidth / (baseCardWidth + gap)));
+		// Get the scaled width from the first card. offsetWidth correctly reflects the transformed size.
+		const scaledCardWidth = cards[0].offsetWidth;
 
-		// Initialize column heights in unscaled pixels
+		// Determine the number of columns based on how many scaled cards can fit.
+		const columnCount = this.manualColumns ||
+			Math.max(1, Math.floor(containerWidth / (scaledCardWidth + gap)));
+
 		const columnHeights = new Array<number>(columnCount).fill(0);
 
 		cards.forEach((card) => {
-			// Always use unscaled offsetHeight for vertical stacking
-			const cardHeight = card.offsetHeight;
+			// Get the scaled height. offsetHeight also reflects the transformed size.
+			const scaledCardHeight = card.offsetHeight;
+			const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
 
-			// Find shortest column
-			const col = columnHeights.indexOf(Math.min(...columnHeights));
-
-			// Calculate unscaled positions
-			const left = col * (baseCardWidth + gap);
-			const top = columnHeights[col];
+			// Calculate positions using the scaled dimensions.
+			const left = shortestColumnIndex * (scaledCardWidth + gap);
+			const top = columnHeights[shortestColumnIndex];
 
 			card.style.left = `${left}px`;
 			card.style.top = `${top}px`;
-			card.style.width = `${baseCardWidth}px`; // Unscaled width
+			// Width is already set via CSS and adjusted by the transform, so no need to set it here.
 
-			// Advance column height by unscaled height + gap
-			columnHeights[col] += cardHeight + gap;
+			// Update the column's height with the scaled card height.
+			columnHeights[shortestColumnIndex] += scaledCardHeight + gap;
 		});
 
-		// Set container’s height to the tallest unscaled stack
-		const tallest = Math.max(...columnHeights);
-		this.cardsContainer.style.height = `${tallest}px`;
+		// Set the container's total height to accommodate the tallest column.
+		const tallestColumn = Math.max(...columnHeights);
+		this.cardsContainer.style.height = `${tallestColumn}px`;
 	}
 
 	public filterCards() {
