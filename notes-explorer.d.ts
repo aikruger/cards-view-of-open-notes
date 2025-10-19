@@ -12,6 +12,8 @@ declare module 'obsidian' {
     on(name: 'notes-explorer:hidden-cards-updated', callback: (count: number) => void): EventRef;
     on(name: 'notes-explorer:show-hidden-modal', callback: () => void): EventRef;
     on(name: 'notes-explorer:load-all-tabs', callback: () => void): EventRef;
+    on(name: 'notes-explorer:view-state-changed', callback: () => void): EventRef;
+    on(name: 'notes-explorer:zoom-changed', callback: (newZoom: number) => void): EventRef;
 
     trigger(name: 'notes-explorer:set-zoom', data: number): void;
     trigger(name: 'notes-explorer:set-scale', data: number): void;
@@ -23,5 +25,7 @@ declare module 'obsidian' {
     trigger(name: 'notes-explorer:hidden-cards-updated', data: number): void;
     trigger(name: 'notes-explorer:show-hidden-modal'): void;
     trigger(name: 'notes-explorer:load-all-tabs'): void;
+    trigger(name: 'notes-explorer:view-state-changed'): void;
+    trigger(name: 'notes-explorer:zoom-changed', data: number): void;
   }
 }

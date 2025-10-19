@@ -10,6 +10,22 @@ export class NotesExplorerMenuView extends ItemView {
     constructor(leaf: WorkspaceLeaf, plugin: NotesExplorerPlugin) {
         super(leaf);
         this.plugin = plugin;
+
+        // Listen for cards view creation
+        this.registerEvent(
+            this.app.workspace.on('notes-explorer:view-state-changed', () => {
+                this.drawUI();
+            })
+        );
+
+        this.registerEvent(
+            this.app.workspace.on('notes-explorer:zoom-changed', (newZoom: number) => {
+                const zoomDisplay = this.menuContainer.querySelector('.notes-explorer-zoom-display');
+                if (zoomDisplay) {
+                    zoomDisplay.setText(`${Math.round(newZoom * 100)}%`);
+                }
+            })
+        );
     }
 
     getViewType(): string {
@@ -221,8 +237,9 @@ export class NotesExplorerMenuView extends ItemView {
         const messageContainer = container.createDiv({ cls: 'missing-view-message' });
         messageContainer.createEl('p', { text: 'Cards view is not open.' });
         const createBtn = messageContainer.createEl('button', { text: 'Create View' });
-        createBtn.addEventListener('click', () => {
+        createBtn.addEventListener("click", () => {
             this.plugin.activateView();
+            // The activateView method now triggers the event, so the menu will auto-refresh
         });
     }
 

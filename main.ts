@@ -102,6 +102,9 @@ export default class NotesExplorerPlugin extends Plugin {
 		if (leaf) {
 			workspace.revealLeaf(leaf);
 		}
+
+		// Trigger event to notify menu view
+		this.app.workspace.trigger('notes-explorer:view-state-changed');
 	}
 
 	async activateMenuView() {
@@ -228,6 +231,7 @@ export class NotesExplorerView extends ItemView {
 
 	public applyZoom() {
 		this.cardsContainer.style.transform = `scale(${this.zoomLevel})`;
+		this.app.workspace.trigger('notes-explorer:zoom-changed', this.zoomLevel);
 	}
 
 	public applyScaleToCards() {
@@ -241,18 +245,43 @@ export class NotesExplorerView extends ItemView {
 	public layoutMasonryGrid() {
 		if (!this.cardsContainer) return;
 
-		const columnCount = this.manualColumns || Math.floor(this.cardsContainer.offsetWidth / (this.cardWidth + 10));
-		this.cardsContainer.style.setProperty('--notes-explorer-columns', columnCount.toString());
+		const cards = Array.from(
+			this.cardsContainer.querySelectorAll('.notes-explorer-card')
+		) as HTMLElement[];
 
-		const cards = Array.from(this.cardsContainer.querySelectorAll('.notes-explorer-card')) as HTMLElement[];
+		if (cards.length === 0) return;
 
-		cards.forEach(card => {
-			const content = card.querySelector('.notes-explorer-card-content') as HTMLElement;
-			if (content) {
-				const rowSpan = Math.ceil((content.offsetHeight + 40) / 10);
-				card.style.gridRowEnd = `span ${rowSpan}`;
-			}
+		const containerWidth = this.cardsContainer.offsetWidth;
+		const columnCount = this.manualColumns ||
+			Math.max(1, Math.floor(containerWidth / (this.cardWidth + 10)));
+
+		const gap = 10;
+		const columnWidth = this.cardWidth;
+
+		// Initialize column heights
+		const columnHeights = new Array(columnCount).fill(0);
+
+		// Position each card
+		cards.forEach((card) => {
+			// Find the shortest column
+			const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
+
+			// Calculate position
+			const left = shortestColumnIndex * (columnWidth + gap);
+			const top = columnHeights[shortestColumnIndex];
+
+			// Apply position
+			card.style.left = `${left}px`;
+			card.style.top = `${top}px`;
+			card.style.width = `${columnWidth}px`;
+
+			// Update column height
+			columnHeights[shortestColumnIndex] += card.offsetHeight + gap;
 		});
+
+		// Set container height to tallest column
+		const tallestColumn = Math.max(...columnHeights);
+		this.cardsContainer.style.height = `${tallestColumn}px`;
 	}
 
 	public filterCards() {
@@ -371,14 +400,14 @@ export class NotesExplorerView extends ItemView {
 		(content as any).component = component;
 
 		try {
-			// Get file content
 			const fileContent = await this.app.vault.cachedRead(file);
-
-			// Render markdown content
 			await MarkdownRenderer.render(this.app, fileContent, content, file.path, component);
-
-			// Load all sub-components (e.g., embeds, code blocks)
 			component.load();
+
+			// Wait for content to render, then recalculate layout
+			requestAnimationFrame(() => {
+				this.layoutMasonryGrid();
+			});
 		} catch (e) {
 			content.setText(`Error loading content: ${e}`);
 		}
@@ -420,8 +449,8 @@ export class NotesExplorerView extends ItemView {
 
 		const onMouseUp = () => {
 			isResizing = false;
-			document.removeEventListener('mousemove', onMouseMove);
-			document.removeEventListener('mouseup', onMouseUp);
+			document.removeEventListener("mousemove", onMouseMove);
+			document.removeEventListener("mouseup", onMouseUp);
 
 			// Store custom size
 			this.customCardSizes.set(file.path, {
@@ -429,10 +458,10 @@ export class NotesExplorerView extends ItemView {
 				height: card.offsetHeight
 			});
 
-			// Re-enable masonry layout after slight delay
-			setTimeout(() => {
+			// Force immediate layout recalculation
+			requestAnimationFrame(() => {
 				this.layoutMasonryGrid();
-			}, 100);
+			});
 		};
 
 		// Drag and drop handling
