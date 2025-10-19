@@ -230,25 +230,21 @@ export class NotesExplorerView extends ItemView {
 	}
 
 	public applyZoom() {
-		// Always prevent browser default zoom
-		const root = this.containerEl.children[1] || this.containerEl;
-		// Use CSS transform on the inner cards container only
-		this.cardsContainer.style.transform = `scale(${this.zoomLevel})`;
-		this.cardsContainer.style.transformOrigin = "top left";
-		// Expand the container’s width & height to preserve layout
-		this.cardsContainer.style.width = `${100 / this.zoomLevel}%`;
-		this.cardsContainer.style.height = `${100 / this.zoomLevel}%`;
+		// This now only applies the transform to individual cards and triggers a layout update.
+		// It no longer scales the container.
+		this.applyScaleToCards();
 		this.app.workspace.trigger('notes-explorer:zoom-changed', this.zoomLevel);
 	}
 
 	public applyScaleToCards() {
-		const cards = this.cardsContainer.querySelectorAll(
-			".notes-explorer-card"
-		) as NodeListOf<HTMLElement>;
+		const cards = this.cardsContainer.querySelectorAll(".notes-explorer-card") as NodeListOf<HTMLElement>;
+		const combinedScale = this.zoomLevel * this.contentScale;
+
 		cards.forEach(card => {
-			card.style.transform = `scale(${this.contentScale})`;
+			card.style.transform = `scale(${combinedScale})`;
 			card.style.transformOrigin = "top left";
 		});
+
 		// After scaling, recompute masonry layout
 		requestAnimationFrame(() => this.layoutMasonryGrid());
 	}
@@ -256,18 +252,31 @@ export class NotesExplorerView extends ItemView {
 	public layoutMasonryGrid() {
 		if (!this.cardsContainer) return;
 
-		const cards = Array.from(
+		let cards = Array.from(
 			this.cardsContainer.querySelectorAll('.notes-explorer-card')
 		) as HTMLElement[];
+
+		// If sorting manually, we must sort the array before calculating layout
+		if (this.sortMethod === 'manual') {
+			cards.sort((a, b) => {
+				const orderA = this.stableCardOrder.get(a.dataset.path!) ?? Infinity;
+				const orderB = this.stableCardOrder.get(b.dataset.path!) ?? Infinity;
+				return orderA - orderB;
+			});
+		}
 
 		if (cards.length === 0) return;
 
 		const containerWidth = this.cardsContainer.offsetWidth;
+		// Use a combined scale for layout calculations
+		const combinedScale = this.zoomLevel * this.contentScale;
+		const scaledCardWidth = this.cardWidth * combinedScale;
+
 		const columnCount = this.manualColumns ||
-			Math.max(1, Math.floor(containerWidth / (this.cardWidth + 10)));
+			Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
 
 		const gap = 10;
-		const columnWidth = this.cardWidth;
+		const columnWidth = this.cardWidth; // Base width for styling
 
 		// Initialize column heights
 		const columnHeights = new Array(columnCount).fill(0);
@@ -277,17 +286,20 @@ export class NotesExplorerView extends ItemView {
 			// Find the shortest column
 			const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
 
+			// The card's offsetWidth/Height already reflect the transformation, so we can use them directly
+			const cardHeight = card.offsetHeight;
+
 			// Calculate position
-			const left = shortestColumnIndex * (columnWidth + gap);
+			const left = shortestColumnIndex * (scaledCardWidth + gap);
 			const top = columnHeights[shortestColumnIndex];
 
-			// Apply position
+			// Apply position (note: width is set on the card, not scaled here)
 			card.style.left = `${left}px`;
 			card.style.top = `${top}px`;
-			card.style.width = `${columnWidth}px`;
+			card.style.width = `${columnWidth}px`; // Use base width for the element style
 
 			// Update column height
-			columnHeights[shortestColumnIndex] += card.offsetHeight + gap;
+			columnHeights[shortestColumnIndex] += cardHeight + gap;
 		});
 
 		// Set container height to tallest column
@@ -575,13 +587,11 @@ export class NotesExplorerView extends ItemView {
 				});
 
 				// Re-sort and re-layout
-				this.updateCards();
+				//this.updateCards();
+				requestAnimationFrame(() => this.layoutMasonryGrid());
 			}
 
 			this.dropIndicator!.style.display = 'none';
-
-			// Then refresh layout:
-			this.layoutMasonryGrid();
 		});
 
 		// Focus on click

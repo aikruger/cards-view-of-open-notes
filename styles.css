@@ -152,8 +152,8 @@
 .notes-explorer-cards-container {
   position: relative;
   overflow: auto;     /* allow both axes to scroll if needed */
-  width: 100%;        /* base width, overridden by JS when zoomed */
-  height: 100%;       /* base height */
+  width: 100% !important;
+  height: 100% !important;
   padding: 10px;
 }
 
