@@ -570,6 +570,9 @@ export class NotesExplorerView extends ItemView {
 			}
 
 			this.dropIndicator!.style.display = 'none';
+
+			// Then refresh layout:
+			this.layoutMasonryGrid();
 		});
 
 		// Focus on click
@@ -580,6 +583,20 @@ export class NotesExplorerView extends ItemView {
 			});
 			// Add 'focused' to the clicked card
 			card.addClass('focused');
+		});
+
+		card.addEventListener("dblclick", async () => {
+			const { workspace, vault } = this.app;
+			const leaves = workspace.getLeavesOfType("markdown"); // Only markdown leaves
+			let leaf = leaves.find(l => l.getDisplayText() === file.basename);
+
+			if (leaf) {
+				workspace.setActiveLeaf(leaf);
+			} else {
+				const newLeaf = workspace.getLeaf("tab");
+				await newLeaf.openFile(file);
+				workspace.setActiveLeaf(newLeaf);
+			}
 		});
 
 		if (prepend) {
@@ -926,6 +943,9 @@ export class NotesExplorerView extends ItemView {
 		requestAnimationFrame(() => {
 			this.layoutMasonryGrid();
 		});
+
+		// Trigger event to update card count in menu
+		this.app.workspace.trigger('notes-explorer:cards-count-updated', openFiles.length);
 	}
 
 	public getOpenFiles(): Array<{ file: TFile, leaf: WorkspaceLeaf }> {

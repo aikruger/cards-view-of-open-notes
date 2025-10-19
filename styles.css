@@ -154,8 +154,7 @@
   position: relative;
   padding: 10px;
   overflow-y: auto;
-  overflow-x: hidden;
-  /* Remove any grid-template-columns or grid properties */
+  overflow-x: auto; /* Enable horizontal scrolling */
 }
 
 .notes-explorer-cards-container.drag-active {
