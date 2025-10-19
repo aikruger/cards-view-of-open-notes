@@ -237,6 +237,10 @@ export class NotesExplorerView extends ItemView {
 	}
 
 	public applyScaleToCards() {
+		// First, lay out the cards using their unscaled dimensions
+		this.layoutMasonryGrid();
+
+		// Then, apply the visual scaling transform to each card
 		const cards = this.cardsContainer.querySelectorAll(".notes-explorer-card") as NodeListOf<HTMLElement>;
 		const combinedScale = this.zoomLevel * this.contentScale;
 
@@ -244,73 +248,50 @@ export class NotesExplorerView extends ItemView {
 			card.style.transform = `scale(${combinedScale})`;
 			card.style.transformOrigin = "top left";
 		});
-
-		// After scaling, recompute masonry layout
-		requestAnimationFrame(() => this.layoutMasonryGrid());
 	}
 
 	public layoutMasonryGrid() {
 		if (!this.cardsContainer) return;
 
-		let cards = Array.from(
+		const cards = Array.from(
 			this.cardsContainer.querySelectorAll('.notes-explorer-card')
 		) as HTMLElement[];
 
-		// If sorting manually, we must sort the array before calculating layout
-		if (this.sortMethod === 'manual') {
-			cards.sort((a, b) => {
-				const orderA = this.stableCardOrder.get(a.dataset.path!) ?? Infinity;
-				const orderB = this.stableCardOrder.get(b.dataset.path!) ?? Infinity;
-				return orderA - orderB;
-			});
-		}
-
 		if (cards.length === 0) return;
 
-		// Compute effective widths based on combined zoom and content scale
-		const effectiveScale = this.zoomLevel * this.contentScale;
-		// Use the original (100%) container width, then scale it
-		const rawContainerWidth = this.cardsContainer.clientWidth;
-		const containerWidth = rawContainerWidth * effectiveScale;
-
-		// Card width before transform
+		const containerWidth = this.cardsContainer.clientWidth;
 		const baseCardWidth = this.cardWidth;
-		const scaledCardWidth = baseCardWidth * effectiveScale;
-
-		// Determine columns by fitting scaled cards into scaled container
-		const columnCount = this.manualColumns ||
-			Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
-
 		const gap = 10;
-		const columnWidth = this.cardWidth; // Base width for styling
 
-		// Initialize column heights
-		const columnHeights = new Array(columnCount).fill(0);
+		// Determine number of columns based on unscaled widths
+		const columnCount = this.manualColumns ||
+			Math.max(1, Math.floor(containerWidth / (baseCardWidth + gap)));
 
-		// Position each card
+		// Initialize column heights in unscaled pixels
+		const columnHeights = new Array<number>(columnCount).fill(0);
+
 		cards.forEach((card) => {
-			// Find the shortest column
-			const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
-
-			// The card's offsetWidth/Height already reflect the transformation, so we can use them directly
+			// Always use unscaled offsetHeight for vertical stacking
 			const cardHeight = card.offsetHeight;
 
-			// Calculate position
-			const left = shortestColumnIndex * (scaledCardWidth + gap);
-			const top = columnHeights[shortestColumnIndex];
+			// Find shortest column
+			const col = columnHeights.indexOf(Math.min(...columnHeights));
 
-			// Apply position (note: width is set on the card, not scaled here)
+			// Calculate unscaled positions
+			const left = col * (baseCardWidth + gap);
+			const top = columnHeights[col];
+
 			card.style.left = `${left}px`;
 			card.style.top = `${top}px`;
-			card.style.width = `${columnWidth}px`; // Use base width for the element style
+			card.style.width = `${baseCardWidth}px`; // Unscaled width
 
-			// Update column height
-			columnHeights[shortestColumnIndex] += cardHeight + gap;
+			// Advance column height by unscaled height + gap
+			columnHeights[col] += cardHeight + gap;
 		});
 
-		// Set container height to tallest column
-		const tallestColumn = Math.max(...columnHeights);
-		this.cardsContainer.style.height = `${tallestColumn}px`;
+		// Set container’s height to the tallest unscaled stack
+		const tallest = Math.max(...columnHeights);
+		this.cardsContainer.style.height = `${tallest}px`;
 	}
 
 	public filterCards() {
