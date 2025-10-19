@@ -267,11 +267,17 @@ export class NotesExplorerView extends ItemView {
 
 		if (cards.length === 0) return;
 
-		const containerWidth = this.cardsContainer.offsetWidth;
-		// Use a combined scale for layout calculations
-		const combinedScale = this.zoomLevel * this.contentScale;
-		const scaledCardWidth = this.cardWidth * combinedScale;
+		// Compute effective widths based on combined zoom and content scale
+		const effectiveScale = this.zoomLevel * this.contentScale;
+		// Use the original (100%) container width, then scale it
+		const rawContainerWidth = this.cardsContainer.clientWidth;
+		const containerWidth = rawContainerWidth * effectiveScale;
 
+		// Card width before transform
+		const baseCardWidth = this.cardWidth;
+		const scaledCardWidth = baseCardWidth * effectiveScale;
+
+		// Determine columns by fitting scaled cards into scaled container
 		const columnCount = this.manualColumns ||
 			Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
 
@@ -965,6 +971,7 @@ export class NotesExplorerView extends ItemView {
 
 		// Trigger event to update card count in menu
 		this.app.workspace.trigger('notes-explorer:cards-count-updated', openFiles.length);
+		this.app.workspace.trigger('notes-explorer:view-state-changed');
 	}
 
 	public getOpenFiles(): Array<{ file: TFile, leaf: WorkspaceLeaf }> {

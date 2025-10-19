@@ -33,11 +33,6 @@ export class NotesExplorerMenuView extends ItemView {
             })
         );
 
-        this.registerEvent(
-            this.app.workspace.on('notes-explorer:cards-count-updated', (count: number) => {
-                this.updateCardsCount(count);
-            })
-        );
     }
 
     getViewType(): string {
@@ -68,6 +63,13 @@ export class NotesExplorerMenuView extends ItemView {
 
         if (view) {
             this.createToolbarControls(this.menuContainer);
+
+            // Create or update the card count display
+            const total = view.stableCardOrder.size;
+            this.menuContainer.createDiv({
+                cls: 'notes-explorer-total-count',
+                text: `Total cards: ${total}`
+            });
         } else {
             this.createMissingViewMessage(this.menuContainer);
         }
@@ -257,14 +259,6 @@ export class NotesExplorerMenuView extends ItemView {
 
     public updateView() {
         this.drawUI();
-    }
-
-    updateCardsCount(count: number) {
-        let countEl = this.containerEl.querySelector('.cards-count');
-        if (!countEl) {
-            countEl = this.containerEl.createDiv({ cls: 'cards-count' });
-        }
-        countEl.setText(`Cards: ${count}`);
     }
 
     updateHiddenFilesCount() {
