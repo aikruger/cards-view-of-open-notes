@@ -249,63 +249,54 @@ export class NotesExplorerView extends ItemView {
 		requestAnimationFrame(() => this.layoutMasonryGrid());
 	}
 
-	public layoutMasonryGrid() {
-		if (!this.cardsContainer) return;
+layoutMasonryGrid() {
+  if (!this.cardsContainer) return;
 
-		let cards = Array.from(
-			this.cardsContainer.querySelectorAll('.notes-explorer-card')
-		) as HTMLElement[];
+  let cards = Array.from(
+    this.cardsContainer.querySelectorAll(".notes-explorer-card")
+  ) as HTMLElement[];
 
-		// If sorting manually, we must sort the array before calculating layout
-		if (this.sortMethod === 'manual') {
-			cards.sort((a, b) => {
-				const orderA = this.stableCardOrder.get(a.dataset.path!) ?? Infinity;
-				const orderB = this.stableCardOrder.get(b.dataset.path!) ?? Infinity;
-				return orderA - orderB;
-			});
-		}
+  if (this.sortMethod === "manual") {
+    cards.sort((a, b) => {
+      const orderA = this.stableCardOrder.get(a.dataset.path!) ?? Infinity;
+      const orderB = this.stableCardOrder.get(b.dataset.path!) ?? Infinity;
+      return orderA - orderB;
+    });
+  }
 
-		if (cards.length === 0) return;
+  if (cards.length === 0) return;
 
-		const containerWidth = this.cardsContainer.offsetWidth;
-		// Use a combined scale for layout calculations
-		const combinedScale = this.zoomLevel * this.contentScale;
-		const scaledCardWidth = this.cardWidth * combinedScale;
+  const containerWidth = this.cardsContainer.offsetWidth;
+  const combinedScale = this.zoomLevel * this.contentScale;
+  const scaledCardWidth = this.cardWidth * combinedScale;
 
-		const columnCount = this.manualColumns ||
-			Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
+  const columnCount = this.manualColumns ||
+    Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
 
-		const gap = 10;
-		const columnWidth = this.cardWidth; // Base width for styling
+  const gap = 10;
+  const columnHeights = new Array(columnCount).fill(0);
 
-		// Initialize column heights
-		const columnHeights = new Array(columnCount).fill(0);
+  cards.forEach((card) => {
+    const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
 
-		// Position each card
-		cards.forEach((card) => {
-			// Find the shortest column
-			const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
+    // Get the ACTUAL rendered height including transform
+    const actualHeight = card.getBoundingClientRect().height;
 
-			// The card's offsetWidth/Height already reflect the transformation, so we can use them directly
-			const cardHeight = card.offsetHeight;
+    // Calculate positions in scaled coordinate space
+    const left = shortestColumnIndex * (scaledCardWidth + gap);
+    const top = columnHeights[shortestColumnIndex];
 
-			// Calculate position
-			const left = shortestColumnIndex * (scaledCardWidth + gap);
-			const top = columnHeights[shortestColumnIndex];
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+    card.style.width = `${this.cardWidth}px`; // Unscaled base width
 
-			// Apply position (note: width is set on the card, not scaled here)
-			card.style.left = `${left}px`;
-			card.style.top = `${top}px`;
-			card.style.width = `${columnWidth}px`; // Use base width for the element style
+    // Advance column height by the VISUAL height (what user sees)
+    columnHeights[shortestColumnIndex] += actualHeight + gap;
+  });
 
-			// Update column height
-			columnHeights[shortestColumnIndex] += cardHeight + gap;
-		});
-
-		// Set container height to tallest column
-		const tallestColumn = Math.max(...columnHeights);
-		this.cardsContainer.style.height = `${tallestColumn}px`;
-	}
+  const tallestColumn = Math.max(...columnHeights);
+  this.cardsContainer.style.height = `${tallestColumn}px`;
+}
 
 	public filterCards() {
 		const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card');
