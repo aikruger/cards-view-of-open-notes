@@ -240,58 +240,69 @@ export class NotesExplorerView extends ItemView {
 		const cards = this.cardsContainer.querySelectorAll(".notes-explorer-card") as NodeListOf<HTMLElement>;
 		const combinedScale = this.zoomLevel * this.contentScale;
 
-		// Apply the scale transform to each card so we can measure its new size
 		cards.forEach(card => {
 			card.style.transform = `scale(${combinedScale})`;
 			card.style.transformOrigin = "top left";
 		});
 
-		// NOW, run the layout logic which will read the new scaled dimensions
+		// After scaling, recompute masonry layout
 		requestAnimationFrame(() => this.layoutMasonryGrid());
 	}
 
 	public layoutMasonryGrid() {
 		if (!this.cardsContainer) return;
 
-		const cards = Array.from(
+		let cards = Array.from(
 			this.cardsContainer.querySelectorAll('.notes-explorer-card')
 		) as HTMLElement[];
 
-		if (cards.length === 0) {
-			this.cardsContainer.style.height = '0px'; // Reset height if no cards
-			return;
+		// If sorting manually, we must sort the array before calculating layout
+		if (this.sortMethod === 'manual') {
+			cards.sort((a, b) => {
+				const orderA = this.stableCardOrder.get(a.dataset.path!) ?? Infinity;
+				const orderB = this.stableCardOrder.get(b.dataset.path!) ?? Infinity;
+				return orderA - orderB;
+			});
 		}
 
-		const containerWidth = this.cardsContainer.clientWidth;
-		const gap = 10;
+		if (cards.length === 0) return;
 
-		// Get the scaled width from the first card. offsetWidth correctly reflects the transformed size.
-		const scaledCardWidth = cards[0].offsetWidth;
+		const containerWidth = this.cardsContainer.offsetWidth;
+		// Use a combined scale for layout calculations
+		const combinedScale = this.zoomLevel * this.contentScale;
+		const scaledCardWidth = this.cardWidth * combinedScale;
 
-		// Determine the number of columns based on how many scaled cards can fit.
 		const columnCount = this.manualColumns ||
-			Math.max(1, Math.floor(containerWidth / (scaledCardWidth + gap)));
+			Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
 
-		const columnHeights = new Array<number>(columnCount).fill(0);
+		const gap = 10;
+		const columnWidth = this.cardWidth; // Base width for styling
 
+		// Initialize column heights
+		const columnHeights = new Array(columnCount).fill(0);
+
+		// Position each card
 		cards.forEach((card) => {
-			// Get the scaled height. offsetHeight also reflects the transformed size.
-			const scaledCardHeight = card.offsetHeight;
+			// Find the shortest column
 			const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
 
-			// Calculate positions using the scaled dimensions.
+			// The card's offsetWidth/Height already reflect the transformation, so we can use them directly
+			const cardHeight = card.offsetHeight;
+
+			// Calculate position
 			const left = shortestColumnIndex * (scaledCardWidth + gap);
 			const top = columnHeights[shortestColumnIndex];
 
+			// Apply position (note: width is set on the card, not scaled here)
 			card.style.left = `${left}px`;
 			card.style.top = `${top}px`;
-			// Width is already set via CSS and adjusted by the transform, so no need to set it here.
+			card.style.width = `${columnWidth}px`; // Use base width for the element style
 
-			// Update the column's height with the scaled card height.
-			columnHeights[shortestColumnIndex] += scaledCardHeight + gap;
+			// Update column height
+			columnHeights[shortestColumnIndex] += cardHeight + gap;
 		});
 
-		// Set the container's total height to accommodate the tallest column.
+		// Set container height to tallest column
 		const tallestColumn = Math.max(...columnHeights);
 		this.cardsContainer.style.height = `${tallestColumn}px`;
 	}
@@ -954,7 +965,6 @@ export class NotesExplorerView extends ItemView {
 
 		// Trigger event to update card count in menu
 		this.app.workspace.trigger('notes-explorer:cards-count-updated', openFiles.length);
-		this.app.workspace.trigger('notes-explorer:view-state-changed');
 	}
 
 	public getOpenFiles(): Array<{ file: TFile, leaf: WorkspaceLeaf }> {

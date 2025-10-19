@@ -724,10 +724,3 @@
 .notes-explorer-cards-container::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
-
-.notes-explorer-total-count {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin: 5px 0 10px;
-  text-align: center;
-}
