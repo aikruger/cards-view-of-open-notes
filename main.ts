@@ -31,6 +31,15 @@ export default class NotesExplorerPlugin extends Plugin {
 			}
 		});
 
+interface CardPosition {
+	file: TFile;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	groupId?: string;
+}
+
 		// Add debug command
 		this.addCommand({
 			id: 'debug-cards-view',
@@ -138,6 +147,14 @@ export default class NotesExplorerPlugin extends Plugin {
 export class NotesExplorerView extends ItemView {
 	public cardsContainer: HTMLElement;
 	private toolbar: HTMLElement;
+	public transformContainer: HTMLElement;
+	private canvasWrapper: HTMLElement;
+	private zoomLevel: number = 1.0;
+	private panX: number = 0;
+	private panY: number = 0;
+	private isDraggingCanvas: boolean = false;
+	private dragStartX: number = 0;
+	private dragStartY: number = 0;
 	public draggedCard: HTMLElement | null = null;
 	public draggedFile: TFile | null = null;
 	public draggedLeaf: WorkspaceLeaf | null = null;
@@ -162,6 +179,7 @@ export class NotesExplorerView extends ItemView {
 	public hiddenCards: Set<string> = new Set();  // Track hidden card paths
 	public customCardSizes: Map<string, {width: number, height: number}> = new Map(); // Map<filePath, {width, height}>
 	public tabObserver: MutationObserver | null = null;  // Observer for tab changes
+	private cardPositions: Map<string, CardPosition> = new Map();
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -246,57 +264,8 @@ export class NotesExplorerView extends ItemView {
 		});
 
 		// After scaling, recompute masonry layout
-		requestAnimationFrame(() => this.layoutMasonryGrid());
+
 	}
-
-layoutMasonryGrid() {
-  if (!this.cardsContainer) return;
-
-  let cards = Array.from(
-    this.cardsContainer.querySelectorAll(".notes-explorer-card")
-  ) as HTMLElement[];
-
-  if (this.sortMethod === "manual") {
-    cards.sort((a, b) => {
-      const orderA = this.stableCardOrder.get(a.dataset.path!) ?? Infinity;
-      const orderB = this.stableCardOrder.get(b.dataset.path!) ?? Infinity;
-      return orderA - orderB;
-    });
-  }
-
-  if (cards.length === 0) return;
-
-  const containerWidth = this.cardsContainer.offsetWidth;
-  const combinedScale = this.zoomLevel * this.contentScale;
-  const scaledCardWidth = this.cardWidth * combinedScale;
-
-  const columnCount = this.manualColumns ||
-    Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
-
-  const gap = 10;
-  const columnHeights = new Array(columnCount).fill(0);
-
-  cards.forEach((card) => {
-    const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
-
-    // Get the ACTUAL rendered height including transform
-    const actualHeight = card.getBoundingClientRect().height;
-
-    // Calculate positions in scaled coordinate space
-    const left = shortestColumnIndex * (scaledCardWidth + gap);
-    const top = columnHeights[shortestColumnIndex];
-
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
-    card.style.width = `${this.cardWidth}px`; // Unscaled base width
-
-    // Advance column height by the VISUAL height (what user sees)
-    columnHeights[shortestColumnIndex] += actualHeight + gap;
-  });
-
-  const tallestColumn = Math.max(...columnHeights);
-  this.cardsContainer.style.height = `${tallestColumn}px`;
-}
 
 	public filterCards() {
 		const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card');
@@ -308,7 +277,6 @@ layoutMasonryGrid() {
 				card.style.display = 'none';
 			}
 		});
-		this.layoutMasonryGrid();
 	}
 
 	public handleAutoPan(e: DragEvent) {
@@ -353,9 +321,41 @@ layoutMasonryGrid() {
 		this.layoutMasonryGrid();
 	}
 
-	async createCard(file: TFile, leaf: WorkspaceLeaf, prepend: boolean = false) {
-		const card = this.cardsContainer.createDiv({ cls: 'notes-explorer-card' });
+	async createCard(file: TFile, leaf: WorkspaceLeaf, prepend: boolean = false, index: number) {
+		const card = this.transformContainer.createDiv({ cls: ['card', 'notes-explorer-card'] });
 		card.setAttribute('data-path', file.path);
+
+		// Get saved position or calculate initial mosaic position
+		let position = this.cardPositions.get(file.path);
+
+		if (!position) {
+			// Calculate initial mosaic layout position
+			const openFiles = this.getOpenFiles();
+			const cols = Math.ceil(Math.sqrt(openFiles.length));
+			const col = index % cols;
+			const row = Math.floor(index / cols);
+
+			position = {
+				file: file,
+				x: col * 320 + 20,
+				y: row * 220 + 20,
+				width: 300,
+				height: 200,
+				groupId: undefined
+			};
+
+			this.cardPositions.set(file.path, position);
+		}
+
+		// Apply absolute positioning
+		card.style.position = 'absolute';
+		card.style.left = position.x + 'px';
+		card.style.top = position.y + 'px';
+		card.style.width = position.width + 'px';
+		card.style.height = position.height + 'px';
+
+		// Make draggable
+		this.makeCardDraggable(card, file);
 
 		// Draggable attribute
 		card.setAttribute('draggable', 'true');
@@ -631,19 +631,22 @@ layoutMasonryGrid() {
 	async onOpen() {
 		const container = this.containerEl.children[1];
 		container.empty();
-		container.addClass('notes-explorer-view');
+		this.containerEl.addClass('cards-canvas-view');
 
-		this.cardsContainer = container.createDiv({ cls: 'notes-explorer-cards-container' });
+		// Create canvas wrapper
+		const canvasWrapper = this.containerEl.createDiv('canvas-wrapper');
+		this.canvasWrapper = canvasWrapper;
+
+		// Create transform container for zoom/pan
+		const transformContainer = canvasWrapper.createDiv('transform-container');
+
+		// Store reference
+		this.transformContainer = transformContainer;
+		this.cardsContainer = transformContainer;
 
 		// Create drop indicator
-		this.dropIndicator = this.cardsContainer.createDiv({ cls: 'notes-explorer-drop-indicator' });
+		this.dropIndicator = this.transformContainer.createDiv({ cls: 'notes-explorer-drop-indicator' });
 		this.dropIndicator.style.display = 'none';
-
-		// Add resize observer for masonry layout
-		this.resizeObserver = new ResizeObserver(() => {
-			this.layoutMasonryGrid();
-		});
-		this.resizeObserver.observe(this.cardsContainer);
 
 		// Add auto-pan during drag operations
 		this.registerDomEvent(this.cardsContainer, 'dragover', (e: DragEvent) => {
@@ -727,6 +730,155 @@ layoutMasonryGrid() {
 
 		// Initial render
 		this.updateCards();
+		this.setupZoomControls();
+		this.setupCanvasPanning();
+	}
+
+	private setupZoomControls(): void {
+		this.registerDomEvent(this.containerEl, 'wheel', (e: WheelEvent) => {
+			if (e.ctrlKey || e.metaKey) {
+				e.preventDefault();
+
+				const delta = e.deltaY > 0 ? 0.9 : 1.1;
+				this.zoomLevel = Math.max(0.1, Math.min(5, this.zoomLevel * delta));
+
+				this.updateTransform();
+			}
+		}, { passive: false });
+	}
+
+	private updateTransform(): void {
+		this.transformContainer.style.transform =
+			`translate(${this.panX}px, ${this.panY}px) scale(${this.zoomLevel})`;
+	}
+
+	private setupCanvasPanning(): void {
+		this.registerDomEvent(this.canvasWrapper, 'mousedown', (e: MouseEvent) => {
+			// Only pan with middle mouse or space+click
+			if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+				e.preventDefault();
+				this.isDraggingCanvas = true;
+				this.dragStartX = e.clientX - this.panX;
+				this.dragStartY = e.clientY - this.panY;
+				this.canvasWrapper.style.cursor = 'grabbing';
+			}
+		});
+
+		this.registerDomEvent(document, 'mousemove', (e: MouseEvent) => {
+			if (this.isDraggingCanvas) {
+				this.panX = e.clientX - this.dragStartX;
+				this.panY = e.clientY - this.dragStartY;
+				this.updateTransform();
+			}
+		});
+
+		this.registerDomEvent(document, 'mouseup', () => {
+			this.isDraggingCanvas = false;
+			this.canvasWrapper.style.cursor = 'default';
+		});
+	}
+
+	private makeCardDraggable(card: HTMLElement, file: TFile): void {
+		let isDragging = false;
+		let startX = 0;
+		let startY = 0;
+		let initialX = 0;
+		let initialY = 0;
+		let isGroupDrag = false;
+		let groupMembers: string[] = [];
+		const groupInitialPositions = new Map<string, {x: number, y: number}>();
+
+		card.addEventListener('mousedown', (e: MouseEvent) => {
+			// Prevent dragging if clicking interactive elements
+			if ((e.target as HTMLElement).closest('.card-close, .card-content')) {
+				return;
+			}
+
+			e.stopPropagation();
+			isDragging = true;
+			isGroupDrag = e.altKey;
+
+			const position = this.cardPositions.get(file.path);
+			initialX = position.x;
+			initialY = position.y;
+			startX = e.clientX / this.zoomLevel;
+			startY = e.clientY / this.zoomLevel;
+
+			// If Alt+drag and card is in a group, get all group members
+			if (isGroupDrag && position.groupId) {
+				groupMembers = Array.from(this.cardPositions.entries())
+					.filter(([_, pos]) => pos.groupId === position.groupId)
+					.map(([path, _]) => path);
+
+				groupInitialPositions.clear();
+				groupMembers.forEach(path => {
+					const pos = this.cardPositions.get(path);
+					if (pos) {
+						groupInitialPositions.set(path, { x: pos.x, y: pos.y });
+					}
+				});
+			}
+
+			card.style.cursor = 'grabbing';
+			card.style.zIndex = '1000';
+
+			document.addEventListener('mousemove', onMouseMove);
+			document.addEventListener('mouseup', onMouseUp);
+		});
+
+		const onMouseMove = (e: MouseEvent) => {
+			if (!isDragging) return;
+
+			e.preventDefault();
+			const deltaX = (e.clientX / this.zoomLevel) - startX;
+			const deltaY = (e.clientY / this.zoomLevel) - startY;
+
+			if (isGroupDrag && groupMembers.length > 0) {
+				groupMembers.forEach(path => {
+					const pos = this.cardPositions.get(path);
+					const cardEl = this.transformContainer.querySelector(`[data-path="${path}"]`) as HTMLElement;
+					const initialPos = groupInitialPositions.get(path);
+					if (pos && cardEl && initialPos) {
+						pos.x = initialPos.x + deltaX;
+						pos.y = initialPos.y + deltaY;
+						cardEl.style.left = pos.x + 'px';
+						cardEl.style.top = pos.y + 'px';
+					}
+				});
+			} else {
+				// Move single card
+				const position = this.cardPositions.get(file.path);
+				position.x = initialX + deltaX;
+				position.y = initialY + deltaY;
+				card.style.left = position.x + 'px';
+				card.style.top = position.y + 'px';
+			}
+
+			// Check for edge grouping indicators
+			this.checkEdgeProximity(card, e);
+		};
+
+		const onMouseUp = () => {
+			if (isDragging) {
+				isDragging = false;
+				card.style.cursor = 'grab';
+				card.style.zIndex = '';
+				this.saveCardPositions();
+			}
+			document.removeEventListener('mousemove', onMouseMove);
+			document.removeEventListener('mouseup', onMouseUp);
+		};
+
+	}
+
+	public saveCardPositions() {
+		// This is where you would persist the card positions to a file or Obsidian's data store.
+		// For now, we'll just log them to the console.
+		console.log('Saving card positions:', this.cardPositions);
+	}
+
+	public checkEdgeProximity(card: HTMLElement, e: MouseEvent) {
+		// Placeholder for edge proximity check
 	}
 
 	public debouncedUpdate() {
@@ -932,9 +1084,9 @@ layoutMasonryGrid() {
 		}
 
 		// Add new cards only (don't recreate existing ones)
-		for (const { file, leaf } of openFiles) {
+		for (const [index, { file, leaf }] of openFiles.entries()) {
 			if (!existingCards.has(file.path)) {
-				await this.createCard(file, leaf);
+				await this.createCard(file, leaf, false, index);
 			} else {
 				// Update active state for existing cards
 				const cardEl = existingCards.get(file.path);
@@ -950,9 +1102,7 @@ layoutMasonryGrid() {
 		}
 
 		// Layout only once after all cards are ready
-		requestAnimationFrame(() => {
-			this.layoutMasonryGrid();
-		});
+
 
 		// Trigger event to update card count in menu
 		this.app.workspace.trigger('notes-explorer:cards-count-updated', openFiles.length);

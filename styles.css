@@ -1,11 +1,33 @@
 /* Notes Explorer Card View Styles */
 
-.notes-explorer-view {
-    padding: 0;
-    height: 100%;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
+.cards-canvas-view {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	position: relative;
+}
+
+.canvas-wrapper {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	position: relative;
+}
+
+.transform-container {
+	width: 100%;
+	height: 100%;
+	position: absolute;
+	transform-origin: 0 0;
+}
+
+.card {
+	background-color: #fff;
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+	overflow: hidden;
+	position: absolute;
 }
 
 .notes-explorer-menu-view {
@@ -181,7 +203,6 @@
 }
 
 .notes-explorer-card {
-  position: absolute;
   padding: 15px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
