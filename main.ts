@@ -3,6 +3,16 @@ import { NotesExplorerMenuView, VIEW_TYPE_NOTES_EXPLORER_MENU } from './menu-vie
 
 const VIEW_TYPE_NOTES_EXPLORER = "notes-explorer-view";
 
+// Moved CardPosition to top-level so it's accessible throughout the file
+interface CardPosition {
+	file: TFile;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	groupId?: string;
+}
+
 export default class NotesExplorerPlugin extends Plugin {
 	async onload() {
 		// Register the custom view
@@ -109,6 +119,14 @@ export default class NotesExplorerPlugin extends Plugin {
 
 	async activateMenuView() {
 		const { workspace } = this.app;
+
+		// Check if we're in a floating window (popout)
+		const isFloatingWindow = this.app.workspace.activeLeaf?.getRoot() !== (this.app.workspace as any).rootSplit;
+		if (isFloatingWindow) {
+			console.log('Skipping menu view in floating window');
+			return;
+		}
+
 		let leaf: WorkspaceLeaf | null = null;
 		const leaves = workspace.getLeavesOfType(VIEW_TYPE_NOTES_EXPLORER_MENU);
 
@@ -138,6 +156,14 @@ export default class NotesExplorerPlugin extends Plugin {
 export class NotesExplorerView extends ItemView {
 	public cardsContainer: HTMLElement;
 	private toolbar: HTMLElement;
+	public transformContainer: HTMLElement;
+	private canvasWrapper: HTMLElement;
+	// Remove duplicate private zoomLevel; keep the public one below
+	private panX: number = 0;
+	private panY: number = 0;
+	private isDraggingCanvas: boolean = false;
+	private dragStartX: number = 0;
+	private dragStartY: number = 0;
 	public draggedCard: HTMLElement | null = null;
 	public draggedFile: TFile | null = null;
 	public draggedLeaf: WorkspaceLeaf | null = null;
@@ -162,6 +188,7 @@ export class NotesExplorerView extends ItemView {
 	public hiddenCards: Set<string> = new Set();  // Track hidden card paths
 	public customCardSizes: Map<string, {width: number, height: number}> = new Map(); // Map<filePath, {width, height}>
 	public tabObserver: MutationObserver | null = null;  // Observer for tab changes
+	private cardPositions: Map<string, CardPosition> = new Map();
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -198,6 +225,23 @@ export class NotesExplorerView extends ItemView {
 
 		this.registerEvent(this.app.workspace.on('notes-explorer:reset-layout', () => {
 			this.layoutMasonryGrid();
+		}));
+
+		// Full reset including pan/zoom and card positions
+		this.registerEvent((this.app.workspace as any).on('notes-explorer:reset-layout-full', () => {
+			this.panX = 0;
+			this.panY = 0;
+			this.zoomLevel = 1;
+
+			this.cardPositions.clear();
+			this.stableCardOrder.clear();
+			this.orderCounter = 0;
+
+			this.updateTransform();
+			this.layoutMasonryGrid();
+			this.updateCards();
+
+			console.log('Canvas fully reset to initial state');
 		}));
 
 		this.registerEvent(this.app.workspace.on('notes-explorer:show-hidden-modal', () => {
@@ -245,58 +289,8 @@ export class NotesExplorerView extends ItemView {
 			card.style.transformOrigin = "top left";
 		});
 
-		// After scaling, recompute masonry layout
-		requestAnimationFrame(() => this.layoutMasonryGrid());
+		// Layout is no longer reset on scale/zoom changes
 	}
-
-layoutMasonryGrid() {
-  if (!this.cardsContainer) return;
-
-  let cards = Array.from(
-    this.cardsContainer.querySelectorAll(".notes-explorer-card")
-  ) as HTMLElement[];
-
-  if (this.sortMethod === "manual") {
-    cards.sort((a, b) => {
-      const orderA = this.stableCardOrder.get(a.dataset.path!) ?? Infinity;
-      const orderB = this.stableCardOrder.get(b.dataset.path!) ?? Infinity;
-      return orderA - orderB;
-    });
-  }
-
-  if (cards.length === 0) return;
-
-  const containerWidth = this.cardsContainer.offsetWidth;
-  const combinedScale = this.zoomLevel * this.contentScale;
-  const scaledCardWidth = this.cardWidth * combinedScale;
-
-  const columnCount = this.manualColumns ||
-    Math.max(1, Math.floor(containerWidth / (scaledCardWidth + 10)));
-
-  const gap = 10;
-  const columnHeights = new Array(columnCount).fill(0);
-
-  cards.forEach((card) => {
-    const shortestColumnIndex = columnHeights.indexOf(Math.min(...columnHeights));
-
-    // Get the ACTUAL rendered height including transform
-    const actualHeight = card.getBoundingClientRect().height;
-
-    // Calculate positions in scaled coordinate space
-    const left = shortestColumnIndex * (scaledCardWidth + gap);
-    const top = columnHeights[shortestColumnIndex];
-
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
-    card.style.width = `${this.cardWidth}px`; // Unscaled base width
-
-    // Advance column height by the VISUAL height (what user sees)
-    columnHeights[shortestColumnIndex] += actualHeight + gap;
-  });
-
-  const tallestColumn = Math.max(...columnHeights);
-  this.cardsContainer.style.height = `${tallestColumn}px`;
-}
 
 	public filterCards() {
 		const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card');
@@ -308,7 +302,6 @@ layoutMasonryGrid() {
 				card.style.display = 'none';
 			}
 		});
-		this.layoutMasonryGrid();
 	}
 
 	public handleAutoPan(e: DragEvent) {
@@ -350,12 +343,58 @@ layoutMasonryGrid() {
 	}
 
 	public applyColumns() {
-		this.layoutMasonryGrid();
+		// Column changes are visual only via CSS grid
+		// Card positions are preserved from stored values
+		console.log('Column layout applied, card positions preserved');
 	}
 
-	async createCard(file: TFile, leaf: WorkspaceLeaf, prepend: boolean = false) {
-		const card = this.cardsContainer.createDiv({ cls: 'notes-explorer-card' });
+	// Added optional index parameter default to 0 to avoid undefined usage
+	async createCard(file: TFile, leaf: WorkspaceLeaf, prepend: boolean = false, index: number = 0) {
+		const card = this.transformContainer.createDiv({ cls: ['card', 'notes-explorer-card'] });
 		card.setAttribute('data-path', file.path);
+
+		// Get saved position or calculate initial mosaic position
+		let position = this.cardPositions.get(file.path);
+
+		if (!position) {
+			// Initialize position for masonry layout
+			// Actual positioning will be done by layoutMasonryGrid()
+			const offsetX = (index % 3) * 30;
+			const offsetY = Math.floor(index / 3) * 30;
+			
+			position = {
+				file,
+				x: offsetX,  // Start at 0,0 - masonry will reposition
+				y: offsetY,  // Staggered rows for initial visible separation
+				width: 300,
+				height: 200,
+				groupId: undefined
+			};
+			this.cardPositions.set(file.path, position);
+
+			console.log('New card initialized for masonry layout:', {
+				filePath: file.path,
+				index,
+				initialX: position.x,
+				initialY: position.y
+			});
+		}
+
+		// Apply absolute positioning
+		card.style.position = 'absolute';
+		card.style.left = position.x + 'px';
+		card.style.top = position.y + 'px';
+		card.style.width = position.width + 'px';
+		card.style.height = position.height + 'px';
+
+		// Ensure visibility
+		card.style.display = 'block';
+		card.style.visibility = 'visible';
+		card.style.opacity = '1';
+		card.style.zIndex = '1';
+
+		// Make draggable
+		this.makeCardDraggable(card, file);
 
 		// Draggable attribute
 		card.setAttribute('draggable', 'true');
@@ -374,11 +413,7 @@ layoutMasonryGrid() {
 
 		// Header
 		const header = card.createDiv({ cls: 'notes-explorer-card-header' });
-
-		// Click to focus tab
-		header.addEventListener('click', () => {
-			this.app.workspace.setActiveLeaf(leaf, { focus: true });
-		});
+		// Header click should NOT change focus; visual header only
 
 		// Title
 		header.createDiv({
@@ -418,10 +453,7 @@ layoutMasonryGrid() {
 			await MarkdownRenderer.render(this.app, fileContent, content, file.path, component);
 			component.load();
 
-			// Wait for content to render, then recalculate layout
-			requestAnimationFrame(() => {
-				this.layoutMasonryGrid();
-			});
+			// Layout reset removed - content rendering doesn't reset position
 		} catch (e) {
 			content.setText(`Error loading content: ${e}`);
 		}
@@ -461,8 +493,8 @@ layoutMasonryGrid() {
 
 		const onMouseUp = () => {
 			isResizing = false;
-			document.removeEventListener("mousemove", onMouseMove);
-			document.removeEventListener("mouseup", onMouseUp);
+			document.removeEventListener('mousemove', onMouseMove);
+			document.removeEventListener('mouseup', onMouseUp);
 
 			// Store custom size
 			this.customCardSizes.set(file.path, {
@@ -585,27 +617,42 @@ layoutMasonryGrid() {
 			this.dropIndicator!.style.display = 'none';
 		});
 
-		// Focus on click
+		// Focus on click with debounce to allow dblclick detection
+		let clickTimer: number | null = null;
 		card.addEventListener('click', (e: MouseEvent) => {
-			// Remove 'focused' from all other cards
-			this.cardsContainer.querySelectorAll('.notes-explorer-card.focused').forEach((c) => {
-				c.removeClass('focused');
-			});
-			// Add 'focused' to the clicked card
-			card.addClass('focused');
+			if (clickTimer !== null) {
+				window.clearTimeout(clickTimer);
+				clickTimer = null;
+				return; // dblclick incoming; skip single-click
+			}
+
+			clickTimer = window.setTimeout(() => {
+				clickTimer = null;
+				// Visual feedback only; do not change focus
+				this.cardsContainer.querySelectorAll('.notes-explorer-card.focused').forEach((c) => {
+					c.removeClass('focused');
+				});
+				card.addClass('focused');
+			}, 250);
 		});
 
-		card.addEventListener("dblclick", async () => {
-			const { workspace, vault } = this.app;
-			const leaves = workspace.getLeavesOfType("markdown"); // Only markdown leaves
-			let leaf = leaves.find(l => l.getDisplayText() === file.basename);
-
-			if (leaf) {
-				workspace.setActiveLeaf(leaf);
+		card.addEventListener('dblclick', async () => {
+			if (clickTimer !== null) {
+				window.clearTimeout(clickTimer);
+				clickTimer = null;
+			}
+			// Only double-click changes focus
+			const { workspace } = this.app;
+			const leaves = workspace.getLeavesOfType('markdown');
+			let leaf2 = leaves.find(l => l.getDisplayText() === file.basename);
+			if (leaf2) {
+				console.log('Double-click: Switching to existing leaf for', file.basename);
+				workspace.setActiveLeaf(leaf2, { focus: true });
 			} else {
-				const newLeaf = workspace.getLeaf("tab");
+				console.log('Double-click: Opening new leaf for', file.basename);
+				const newLeaf = workspace.getLeaf('tab');
 				await newLeaf.openFile(file);
-				workspace.setActiveLeaf(newLeaf);
+				workspace.setActiveLeaf(newLeaf, { focus: true });
 			}
 		});
 
@@ -614,119 +661,222 @@ layoutMasonryGrid() {
 		} else {
 			this.cardsContainer.appendChild(card);
 		}
+
+		// Card creation does not trigger layout reset
+		// Card positions are preserved from cardPositions map
 	}
 
-	getViewType(): string {
-		return VIEW_TYPE_NOTES_EXPLORER;
-	}
-
-	getDisplayText(): string {
-		return "Notes Explorer";
-	}
-
-	getIcon(): string {
-		return "layout-grid";
-	}
-
-	async onOpen() {
-		const container = this.containerEl.children[1];
-		container.empty();
-		container.addClass('notes-explorer-view');
-
-		this.cardsContainer = container.createDiv({ cls: 'notes-explorer-cards-container' });
-
-		// Create drop indicator
-		this.dropIndicator = this.cardsContainer.createDiv({ cls: 'notes-explorer-drop-indicator' });
-		this.dropIndicator.style.display = 'none';
-
-		// Add resize observer for masonry layout
-		this.resizeObserver = new ResizeObserver(() => {
-			this.layoutMasonryGrid();
+	// Listen for window/container resize and reset canvas accordingly
+	private setupResizeListener() {
+		const resizeObserver = new ResizeObserver(() => {
+			this.resetCanvasView();
 		});
-		this.resizeObserver.observe(this.cardsContainer);
+		resizeObserver.observe(this.containerEl);
+		this.resizeObserver = resizeObserver;
 
-		// Add auto-pan during drag operations
-		this.registerDomEvent(this.cardsContainer, 'dragover', (e: DragEvent) => {
-			this.handleAutoPan(e);
+		this.registerEvent(
+			this.app.workspace.on('resize', () => {
+				this.resetCanvasView();
+			})
+		);
+	}
+
+	// Preserve zoom/pan while adjusting sizes on resize
+	private resetCanvasView() {
+		const rect = this.canvasWrapper.getBoundingClientRect();
+		if (rect.width === 0 || rect.height === 0) return;
+
+		// Keep wrapper full size
+		this.canvasWrapper.style.width = '100%';
+		this.canvasWrapper.style.height = '100%';
+
+		// Container size changes no longer trigger layout reset
+		// Only transform (pan/zoom) is updated to preserve position
+
+		// Do NOT reset pan/zoom
+		// this.panX = 0;
+		// this.panY = 0;
+		// this.zoomLevel = 1;
+
+		// Apply current pan/zoom
+		this.updateTransform();
+
+		console.log('Canvas resized (zoom/pan preserved):', {
+			width: rect.width,
+			height: rect.height,
+			zoom: this.zoomLevel,
+			panX: this.panX,
+			panY: this.panY
 		});
+	}
 
-		// Add keyboard shortcuts for zoom
-		this.registerDomEvent(container as HTMLElement, 'keydown', (e: KeyboardEvent) => {
-			if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=')) {
-				e.preventDefault();
-				this.zoomLevel = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
-				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
-				this.applyZoom();
-			}
-
-			if ((e.ctrlKey || e.metaKey) && e.key === '-') {
-				e.preventDefault();
-				this.zoomLevel = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
-				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
-				this.applyZoom();
-			}
-
-			if ((e.ctrlKey || e.metaKey) && e.key === '0') {
-				e.preventDefault();
-				this.zoomLevel = 1.0;
-				this.applyZoom();
-			}
-		});
-
-		// Add mouse wheel zoom with Ctrl/Cmd modifier
-		this.registerDomEvent(container as HTMLElement, 'wheel', (e: WheelEvent) => {
+	private setupZoomControls(): void {
+		this.registerDomEvent(this.containerEl, 'wheel', (e: WheelEvent) => {
 			if (e.ctrlKey || e.metaKey) {
 				e.preventDefault();
 
-				if (e.deltaY < 0) {
-					this.zoomLevel = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
-				} else {
-					this.zoomLevel = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
-				}
+				const delta = e.deltaY > 0 ? 0.9 : 1.1;
+				this.zoomLevel = Math.max(0.1, Math.min(5, this.zoomLevel * delta));
 
-				this.zoomLevel = Math.round(this.zoomLevel * 10) / 10;
-				this.applyZoom();
+				this.updateTransform();
 			}
 		}, { passive: false });
+	}
 
-		// Add click-outside handler to remove focused state
-		this.registerDomEvent(document, 'click', (e: MouseEvent) => {
-			const clickedCard = (e.target as HTMLElement).closest('.notes-explorer-card');
-			if (!clickedCard) {
-				// Clicked outside any card - remove all focused states
-				this.cardsContainer.querySelectorAll('.notes-explorer-card.focused').forEach((c) => {
-					c.removeClass('focused');
-				});
+	private updateTransform(): void {
+		this.transformContainer.style.transform =
+			`translate(${this.panX}px, ${this.panY}px) scale(${this.zoomLevel})`;
+	}
+
+	private setupCanvasPanning(): void {
+		this.registerDomEvent(this.canvasWrapper, 'mousedown', (e: MouseEvent) => {
+			// Only pan with middle mouse or space+click
+			if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+				e.preventDefault();
+				this.isDraggingCanvas = true;
+				this.dragStartX = e.clientX - this.panX;
+				this.dragStartY = e.clientY - this.panY;
+				this.canvasWrapper.style.cursor = 'grabbing';
 			}
 		});
 
-		// Listen to workspace changes to update the view
-		this.registerEvent(
-			this.app.workspace.on('active-leaf-change', () => {
-				this.debouncedUpdate();
-			})
-		);
+		this.registerDomEvent(document, 'mousemove', (e: MouseEvent) => {
+			if (this.isDraggingCanvas) {
+				this.panX = e.clientX - this.dragStartX;
+				this.panY = e.clientY - this.dragStartY;
+				this.updateTransform();
+			}
+		});
 
-		this.registerEvent(
-			this.app.workspace.on('file-open', () => {
-				this.debouncedUpdate();
-			})
-		);
+		this.registerDomEvent(document, 'mouseup', () => {
+			this.isDraggingCanvas = false;
+			this.canvasWrapper.style.cursor = 'default';
+		});
+	}
 
-		this.registerEvent(
-			this.app.workspace.on('layout-change', () => {
-				this.debouncedUpdate();
-			})
-		);
+	private makeCardDraggable(card: HTMLElement, file: TFile): void {
+		let isDragging = false;
+		let startX = 0;
+		let startY = 0;
+		let initialX = 0;
+		let initialY = 0;
+		let isGroupDrag = false;
+		let groupMembers: string[] = [];
+		const groupInitialPositions = new Map<string, {x: number, y: number}>();
 
-		// Enable drop zone for files
-		this.setupDropZone();
+		card.addEventListener('mousedown', (e: MouseEvent) => {
+			// Prevent dragging if clicking interactive elements
+			if ((e.target as HTMLElement).closest('.card-close, .card-content')) {
+				return;
+			}
 
-		// Setup tab-to-card highlighting
-		this.setupTabToCardHighlighting();
+			e.stopPropagation();
+			isDragging = true;
+			isGroupDrag = e.altKey;
 
-		// Initial render
-		this.updateCards();
+			let position = this.cardPositions.get(file.path);
+			// Initialize position if missing
+			if (!position) {
+				position = {
+					file,
+					x: card.offsetLeft,
+					y: card.offsetTop,
+					width: card.offsetWidth || 300,
+					height: card.offsetHeight || 200,
+					groupId: undefined
+				};
+				this.cardPositions.set(file.path, position);
+			}
+			initialX = position.x;
+			initialY = position.y;
+			startX = e.clientX / this.zoomLevel;
+			startY = e.clientY / this.zoomLevel;
+
+			// If Alt+drag and card is in a group, get all group members
+			if (isGroupDrag && position.groupId) {
+				groupMembers = Array.from(this.cardPositions.entries())
+					.filter(([_, pos]) => pos.groupId === position!.groupId)
+					.map(([path, _]) => path);
+
+				groupInitialPositions.clear();
+				groupMembers.forEach(path => {
+					const pos = this.cardPositions.get(path);
+					if (pos) {
+						groupInitialPositions.set(path, { x: pos.x, y: pos.y });
+					}
+				});
+			}
+
+			card.style.cursor = 'grabbing';
+			card.style.zIndex = '1000';
+
+			document.addEventListener('mousemove', onMouseMove);
+			document.addEventListener('mouseup', onMouseUp);
+		});
+
+		const onMouseMove = (e: MouseEvent) => {
+			if (!isDragging) return;
+
+			e.preventDefault();
+			const deltaX = (e.clientX / this.zoomLevel) - startX;
+			const deltaY = (e.clientY / this.zoomLevel) - startY;
+
+			if (isGroupDrag && groupMembers.length > 0) {
+				groupMembers.forEach(path => {
+					const pos = this.cardPositions.get(path);
+					const cardEl = this.transformContainer.querySelector(`[data-path="${path}"]`) as HTMLElement;
+					const initialPos = groupInitialPositions.get(path);
+					if (pos && cardEl && initialPos) {
+						pos.x = initialPos.x + deltaX;
+						pos.y = initialY + deltaY;
+						cardEl.style.left = pos.x + 'px';
+						cardEl.style.top = pos.y + 'px';
+					}
+				});
+			} else {
+				// Move single card
+				let position = this.cardPositions.get(file.path);
+				if (!position) {
+					position = {
+						file,
+						x: card.offsetLeft,
+						y: card.offsetTop,
+						width: card.offsetWidth || 300,
+						height: card.offsetHeight || 200,
+						groupId: undefined
+					};
+					this.cardPositions.set(file.path, position);
+				}
+				position.x = initialX + deltaX;
+				position.y = initialY + deltaY;
+				card.style.left = position.x + 'px';
+				card.style.top = position.y + 'px';
+			}
+
+			// Check for edge grouping indicators
+			this.checkEdgeProximity(card, e);
+		};
+
+		const onMouseUp = () => {
+			if (isDragging) {
+				isDragging = false;
+				card.style.cursor = 'grab';
+				card.style.zIndex = '';
+				this.saveCardPositions();
+			}
+			document.removeEventListener('mousemove', onMouseMove);
+			document.removeEventListener('mouseup', onMouseUp);
+		};
+	}
+
+	public saveCardPositions() {
+		// This is where you would persist the card positions to a file or Obsidian's data store.
+		// For now, we'll just log them to the console.
+		console.log('Saving card positions:', this.cardPositions);
+	}
+
+	public checkEdgeProximity(card: HTMLElement, e: MouseEvent) {
+		// Placeholder for edge proximity check
 	}
 
 	public debouncedUpdate() {
@@ -932,9 +1082,9 @@ layoutMasonryGrid() {
 		}
 
 		// Add new cards only (don't recreate existing ones)
-		for (const { file, leaf } of openFiles) {
+		for (const [index, { file, leaf }] of openFiles.entries()) {
 			if (!existingCards.has(file.path)) {
-				await this.createCard(file, leaf);
+				await this.createCard(file, leaf, false, index);
 			} else {
 				// Update active state for existing cards
 				const cardEl = existingCards.get(file.path);
@@ -949,13 +1099,23 @@ layoutMasonryGrid() {
 			}
 		}
 
-		// Layout only once after all cards are ready
+		// Layout is preserved during card updates
+		// Only sorting order is applied, not position reset
 		requestAnimationFrame(() => {
-			this.layoutMasonryGrid();
+			const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card');
+			const visible = Array.from(cards).filter(c => 
+				window.getComputedStyle(c).display !== 'none' &&
+				window.getComputedStyle(c).visibility !== 'hidden'
+			).length;
+			console.log('=== Cards Update Complete ===');
+			console.log('DOM cards:', cards.length);
+			console.log('Visible cards:', visible);
+			console.log('Container size:', {
+				width: this.transformContainer.style.width,
+				height: this.transformContainer.style.height
+			});
+			this.app.workspace.trigger('notes-explorer:cards-count-updated', openFiles.length);
 		});
-
-		// Trigger event to update card count in menu
-		this.app.workspace.trigger('notes-explorer:cards-count-updated', openFiles.length);
 	}
 
 	public getOpenFiles(): Array<{ file: TFile, leaf: WorkspaceLeaf }> {
@@ -987,7 +1147,7 @@ layoutMasonryGrid() {
 			// Method 3: Check containerEl for canvas-related classes
 			if ((leaf as any).containerEl?.closest('.canvas-view')) {
 				console.log('Skipping canvas leaf (method 3):', (leaf.view as any).file?.path);
-				isInCanvas = true;
+			 isInCanvas = true;
 			}
 			
 			if (isInCanvas) continue;
@@ -1194,6 +1354,74 @@ layoutMasonryGrid() {
 		}
 	}
 
+	getViewType(): string {
+		return VIEW_TYPE_NOTES_EXPLORER;
+	}
+
+	getDisplayText(): string {
+		return 'Notes Explorer';
+	}
+
+	getIcon(): string {
+		return 'layout-grid';
+	}
+
+	async onOpen() {
+		console.log('=== Cards View Opening ===');
+		console.log('Window type:', this.leaf.getRoot() === (this.app.workspace as any).rootSplit ? 'main' : 'popout');
+		console.log('Existing markdown leaves:', this.app.workspace.getLeavesOfType('markdown').length);
+		const container = this.containerEl.children[1] as HTMLElement;
+		container.empty();
+
+		// Ensure parent container is properly sized
+		container.style.padding = '0';
+		container.style.margin = '0';
+		container.style.height = '100%';
+		container.style.width = '100%';
+		container.style.display = 'block';
+		container.style.position = 'relative';
+
+		this.containerEl.addClass('cards-canvas-view');
+
+		const canvasWrapper = container.createDiv('canvas-wrapper');
+		this.canvasWrapper = canvasWrapper;
+
+		canvasWrapper.style.width = '100%';
+		canvasWrapper.style.height = '100%';
+		canvasWrapper.style.overflow = 'auto';
+		canvasWrapper.style.position = 'relative';
+		canvasWrapper.style.display = 'block';
+		canvasWrapper.style.border = '1px solid blue'; // debug
+
+		const transformContainer = canvasWrapper.createDiv('transform-container');
+		this.transformContainer = transformContainer;
+		this.cardsContainer = transformContainer;
+
+		transformContainer.style.width = '1000px';
+		transformContainer.style.height = '1000px';
+		transformContainer.style.position = 'relative';
+		transformContainer.style.transformOrigin = '0 0';
+		transformContainer.style.margin = '0';
+		transformContainer.style.padding = '0';
+		transformContainer.style.backgroundColor = 'rgba(0,0,0,0.02)'; // debug background
+
+		this.dropIndicator = this.transformContainer.createDiv({ cls: 'notes-explorer-drop-indicator' });
+		this.dropIndicator.style.display = 'none';
+
+		// Call setup methods
+		this.setupResizeListener();
+		this.setupZoomControls();
+		this.setupCanvasPanning();
+		this.setupDropZone();
+		this.setupTabToCardHighlighting();
+
+		// Initialize with masonry layout to prevent card overlap
+		this.updateCards();
+		requestAnimationFrame(() => {
+			this.layoutMasonryGrid();
+		});
+	}
+	
 	async onClose() {
 		// Remove all tab highlights
 		document.querySelectorAll('.notes-explorer-highlight').forEach((el) => {
@@ -1223,5 +1451,111 @@ layoutMasonryGrid() {
 		if (this.tabObserver) {
 			this.tabObserver.disconnect();
 		}
+	}
+
+	// Basic layout function to avoid missing method errors.
+	// This can be expanded to implement a real masonry/grid layout.
+	private layoutMasonryGrid() {
+		const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card') as NodeListOf<HTMLElement>;
+
+		if (cards.length === 0) {
+			this.transformContainer.style.width = '1000px';
+			this.transformContainer.style.height = '1000px';
+			return;
+		}
+
+		const columnCount = this.manualColumns !== null ? this.manualColumns : this.calculateAutoColumns();
+		const cardWidth = 300;
+		const gapX = 20;
+		const gapY = 20;
+
+		// Create array of columns to track height of each
+		const columns = Array(columnCount).fill(0);
+		const positions: Array<{ cardEl: HTMLElement; x: number; y: number }> = [];
+
+		const combinedScale = this.zoomLevel * this.contentScale;
+
+		// Place each visible card in the shortest column
+		cards.forEach((cardEl) => {
+			const isHidden = window.getComputedStyle(cardEl).display === 'none';
+
+			if (!isHidden) {
+				// Find column with smallest height
+				let minHeight = columns[0];
+				let minColumn = 0;
+
+				for (let i = 1; i < columnCount; i++) {
+					if (columns[i] < minHeight) {
+						minHeight = columns[i];
+						minColumn = i;
+					}
+				}
+
+				// Calculate position in grid
+				const x = minColumn * (cardWidth + gapX);
+				const y = minHeight;
+
+				positions.push({ cardEl, x, y });
+
+				// Update column height
+				const cardHeight = parseInt(cardEl.style.height) || 200;
+				columns[minColumn] += cardHeight + gapY;
+			}
+		});
+
+		// Apply positions to cards
+		positions.forEach(({ cardEl, x, y }) => {
+			const path = cardEl.getAttribute('data-path');
+			if (path && this.cardPositions.has(path)) {
+				const position = this.cardPositions.get(path);
+				if (position) {
+					position.x = x;
+					position.y = y;
+					this.cardPositions.set(path, position);
+				}
+			}
+
+			cardEl.style.left = x + 'px';
+			cardEl.style.top = y + 'px';
+			cardEl.style.position = 'absolute';
+			cardEl.style.visibility = 'visible';
+			cardEl.style.display = 'block';
+			cardEl.style.opacity = '1';
+			cardEl.style.transform = `translate(0, 0) scale(${combinedScale})`;
+			cardEl.style.transformOrigin = 'top left';
+		});
+
+		// Calculate container size based on actual layout
+		let maxX = 0;
+		let maxY = Math.max(...columns);
+
+		for (let i = 0; i < columnCount; i++) {
+			maxX = Math.max(maxX, (i + 1) * (cardWidth + gapX));
+		}
+
+		const paddedWidth = Math.max(maxX + 50, 1000);
+		const paddedHeight = Math.max(maxY + 50, 1000);
+
+		this.transformContainer.style.width = paddedWidth + 'px';
+		this.transformContainer.style.height = paddedHeight + 'px';
+
+		console.log('Masonry layout applied:', {
+			cardsCount: cards.length,
+			columnCount,
+			containerWidth: paddedWidth,
+			containerHeight: paddedHeight,
+			zoom: this.zoomLevel,
+			contentScale: this.contentScale,
+			combinedScale
+		});
+	}
+
+	private calculateAutoColumns(): number {
+		const containerWidth = this.canvasWrapper.clientWidth || 1000;
+		const cardWidth = 300;
+		const gap = 20;
+		const availableWidth = containerWidth / (this.zoomLevel * this.contentScale);
+		const columns = Math.max(1, Math.floor(availableWidth / (cardWidth + gap)));
+		return columns;
 	}
 }

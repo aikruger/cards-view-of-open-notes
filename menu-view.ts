@@ -182,7 +182,7 @@ export class NotesExplorerMenuView extends ItemView {
 		});
 		resetBtn.addEventListener('click', () => {
 			new Notice('Layout reset to masonry');
-			this.app.workspace.trigger('notes-explorer:reset-layout');
+			(this.app.workspace as any).trigger('notes-explorer:reset-layout-full');
 		});
 	}
 

@@ -1,11 +1,41 @@
 /* Notes Explorer Card View Styles */
 
-.notes-explorer-view {
-    padding: 0;
-    height: 100%;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
+.cards-canvas-view {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	position: relative;
+	margin: 0;
+	padding: 0;
+}
+
+.canvas-wrapper {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	position: relative;
+	margin: 0;
+	padding: 0;
+}
+
+.transform-container {
+	position: relative; /* changed from absolute */
+	width: 100%;
+	height: 100%;
+	transform-origin: 0 0;
+	margin: 0;
+	padding: 0;
+	left: auto; /* changed from 0 */
+	top: auto;  /* changed from 0 */
+}
+
+.card {
+	background-color: #fff;
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+	overflow: hidden;
+	position: absolute;
 }
 
 .notes-explorer-menu-view {
@@ -181,7 +211,6 @@
 }
 
 .notes-explorer-card {
-  position: absolute;
   padding: 15px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
@@ -192,7 +221,9 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* Remove margin-bottom as positioning is absolute */
+  visibility: visible;
+  opacity: 1;
+  z-index: 1;
 }
 
 .notes-explorer-card:hover {
