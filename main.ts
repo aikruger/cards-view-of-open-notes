@@ -289,9 +289,7 @@ export class NotesExplorerView extends ItemView {
 			card.style.transformOrigin = "top left";
 		});
 
-		// After scaling, recompute masonry layout
-		// Defer to layout function
-		requestAnimationFrame(() => this.layoutMasonryGrid());
+		// Layout is no longer reset on scale/zoom changes
 	}
 
 	public filterCards() {
@@ -345,7 +343,9 @@ export class NotesExplorerView extends ItemView {
 	}
 
 	public applyColumns() {
-		this.layoutMasonryGrid();
+		// Column changes are visual only via CSS grid
+		// Card positions are preserved from stored values
+		console.log('Column layout applied, card positions preserved');
 	}
 
 	// Added optional index parameter default to 0 to avoid undefined usage
@@ -357,32 +357,26 @@ export class NotesExplorerView extends ItemView {
 		let position = this.cardPositions.get(file.path);
 
 		if (!position) {
-			// Calculate position at center of current viewport, respecting current pan/zoom
-			const viewportWidth = this.canvasWrapper.clientWidth;
-			const viewportHeight = this.canvasWrapper.clientHeight;
-			const centerX = -this.panX / this.zoomLevel + (viewportWidth / 2 / this.zoomLevel);
-			const centerY = -this.panY / this.zoomLevel + (viewportHeight / 2 / this.zoomLevel);
+			// Initialize position for masonry layout
+			// Actual positioning will be done by layoutMasonryGrid()
 			const offsetX = (index % 3) * 30;
-			const offsetY = (index % 3) * 30;
-
+			const offsetY = Math.floor(index / 3) * 30;
+			
 			position = {
 				file,
-				x: Math.max(0, Math.round(centerX - 150 + offsetX)),
-				y: Math.max(0, Math.round(centerY - 100 + offsetY)),
+				x: offsetX,  // Start at 0,0 - masonry will reposition
+				y: offsetY,  // Staggered rows for initial visible separation
 				width: 300,
 				height: 200,
 				groupId: undefined
 			};
-
 			this.cardPositions.set(file.path, position);
 
-			console.log('New card positioned at viewport center:', {
-				centerX,
-				centerY,
-				cardX: position.x,
-				cardY: position.y,
-				zoom: this.zoomLevel,
-				pan: { x: this.panX, y: this.panY }
+			console.log('New card initialized for masonry layout:', {
+				filePath: file.path,
+				index,
+				initialX: position.x,
+				initialY: position.y
 			});
 		}
 
@@ -459,10 +453,7 @@ export class NotesExplorerView extends ItemView {
 			await MarkdownRenderer.render(this.app, fileContent, content, file.path, component);
 			component.load();
 
-			// Wait for content to render, then recalculate layout
-			requestAnimationFrame(() => {
-				this.layoutMasonryGrid();
-			});
+			// Layout reset removed - content rendering doesn't reset position
 		} catch (e) {
 			content.setText(`Error loading content: ${e}`);
 		}
@@ -671,11 +662,8 @@ export class NotesExplorerView extends ItemView {
 			this.cardsContainer.appendChild(card);
 		}
 
-		// Call layout immediately and again on next frame
-		this.layoutMasonryGrid();
-		requestAnimationFrame(() => {
-			this.layoutMasonryGrid();
-		});
+		// Card creation does not trigger layout reset
+		// Card positions are preserved from cardPositions map
 	}
 
 	// Listen for window/container resize and reset canvas accordingly
@@ -702,15 +690,8 @@ export class NotesExplorerView extends ItemView {
 		this.canvasWrapper.style.width = '100%';
 		this.canvasWrapper.style.height = '100%';
 
-		// Compare current transform container size to viewport
-		const currentWidth = parseInt(this.transformContainer.style.width) || 1000;
-		const currentHeight = parseInt(this.transformContainer.style.height) || 1000;
-		const sizeChange = Math.abs(rect.width - currentWidth) > 50 || Math.abs(rect.height - currentHeight) > 50;
-
-		if (sizeChange) {
-			// Recalculate container sizing via layout, preserving zoom/pan
-			this.layoutMasonryGrid();
-		}
+		// Container size changes no longer trigger layout reset
+		// Only transform (pan/zoom) is updated to preserve position
 
 		// Do NOT reset pan/zoom
 		// this.panX = 0;
@@ -847,7 +828,7 @@ export class NotesExplorerView extends ItemView {
 					const initialPos = groupInitialPositions.get(path);
 					if (pos && cardEl && initialPos) {
 						pos.x = initialPos.x + deltaX;
-						pos.y = initialPos.y + deltaY;
+						pos.y = initialY + deltaY;
 						cardEl.style.left = pos.x + 'px';
 						cardEl.style.top = pos.y + 'px';
 					}
@@ -886,7 +867,6 @@ export class NotesExplorerView extends ItemView {
 			document.removeEventListener('mousemove', onMouseMove);
 			document.removeEventListener('mouseup', onMouseUp);
 		};
-
 	}
 
 	public saveCardPositions() {
@@ -1119,10 +1099,9 @@ export class NotesExplorerView extends ItemView {
 			}
 		}
 
-		// Layout and debug
-		this.layoutMasonryGrid();
+		// Layout is preserved during card updates
+		// Only sorting order is applied, not position reset
 		requestAnimationFrame(() => {
-			this.layoutMasonryGrid();
 			const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card');
 			const visible = Array.from(cards).filter(c => 
 				window.getComputedStyle(c).display !== 'none' &&
@@ -1436,8 +1415,11 @@ export class NotesExplorerView extends ItemView {
 		this.setupDropZone();
 		this.setupTabToCardHighlighting();
 
-		// Initial cards load
+		// Initialize with masonry layout to prevent card overlap
 		this.updateCards();
+		requestAnimationFrame(() => {
+			this.layoutMasonryGrid();
+		});
 	}
 	
 	async onClose() {
@@ -1482,41 +1464,98 @@ export class NotesExplorerView extends ItemView {
 			return;
 		}
 
-		let maxX = 0;
-		let maxY = 0;
+		const columnCount = this.manualColumns !== null ? this.manualColumns : this.calculateAutoColumns();
+		const cardWidth = 300;
+		const gapX = 20;
+		const gapY = 20;
+
+		// Create array of columns to track height of each
+		const columns = Array(columnCount).fill(0);
+		const positions: Array<{ cardEl: HTMLElement; x: number; y: number }> = [];
+
 		const combinedScale = this.zoomLevel * this.contentScale;
 
+		// Place each visible card in the shortest column
 		cards.forEach((cardEl) => {
+			const isHidden = window.getComputedStyle(cardEl).display === 'none';
+
+			if (!isHidden) {
+				// Find column with smallest height
+				let minHeight = columns[0];
+				let minColumn = 0;
+
+				for (let i = 1; i < columnCount; i++) {
+					if (columns[i] < minHeight) {
+						minHeight = columns[i];
+						minColumn = i;
+					}
+				}
+
+				// Calculate position in grid
+				const x = minColumn * (cardWidth + gapX);
+				const y = minHeight;
+
+				positions.push({ cardEl, x, y });
+
+				// Update column height
+				const cardHeight = parseInt(cardEl.style.height) || 200;
+				columns[minColumn] += cardHeight + gapY;
+			}
+		});
+
+		// Apply positions to cards
+		positions.forEach(({ cardEl, x, y }) => {
+			const path = cardEl.getAttribute('data-path');
+			if (path && this.cardPositions.has(path)) {
+				const position = this.cardPositions.get(path);
+				if (position) {
+					position.x = x;
+					position.y = y;
+					this.cardPositions.set(path, position);
+				}
+			}
+
+			cardEl.style.left = x + 'px';
+			cardEl.style.top = y + 'px';
+			cardEl.style.position = 'absolute';
 			cardEl.style.visibility = 'visible';
 			cardEl.style.display = 'block';
 			cardEl.style.opacity = '1';
-
-			const x = parseInt(cardEl.style.left) || 0;
-			const y = parseInt(cardEl.style.top) || 0;
-			const width = parseInt(cardEl.style.width) || 300;
-			const height = parseInt(cardEl.style.height) || 200;
-
-			// Use translate with scale to preserve absolute positioning under scale
 			cardEl.style.transform = `translate(0, 0) scale(${combinedScale})`;
 			cardEl.style.transformOrigin = 'top left';
-
-			maxX = Math.max(maxX, x + width);
-			maxY = Math.max(maxY, y + height);
 		});
 
-		const paddedWidth = Math.max(maxX + 200, 1000);
-		const paddedHeight = Math.max(maxY + 200, 1000);
+		// Calculate container size based on actual layout
+		let maxX = 0;
+		let maxY = Math.max(...columns);
+
+		for (let i = 0; i < columnCount; i++) {
+			maxX = Math.max(maxX, (i + 1) * (cardWidth + gapX));
+		}
+
+		const paddedWidth = Math.max(maxX + 50, 1000);
+		const paddedHeight = Math.max(maxY + 50, 1000);
 
 		this.transformContainer.style.width = paddedWidth + 'px';
 		this.transformContainer.style.height = paddedHeight + 'px';
 
-		console.log('Layout updated:', {
+		console.log('Masonry layout applied:', {
 			cardsCount: cards.length,
+			columnCount,
 			containerWidth: paddedWidth,
 			containerHeight: paddedHeight,
 			zoom: this.zoomLevel,
 			contentScale: this.contentScale,
 			combinedScale
 		});
+	}
+
+	private calculateAutoColumns(): number {
+		const containerWidth = this.canvasWrapper.clientWidth || 1000;
+		const cardWidth = 300;
+		const gap = 20;
+		const availableWidth = containerWidth / (this.zoomLevel * this.contentScale);
+		const columns = Math.max(1, Math.floor(availableWidth / (cardWidth + gap)));
+		return columns;
 	}
 }
