@@ -215,7 +215,7 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background-color: var(--background-primary);
-  cursor: pointer;
+  cursor: grab;
   transition: all 0.2s ease;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   display: flex;
@@ -235,13 +235,10 @@
 .notes-explorer-card.dragging {
     opacity: 0.5;
     cursor: move;
-}
-
-.notes-explorer-card.drag-over {
-    border: 2px dashed var(--interactive-accent);
-    background-color: var(--background-secondary);
-    /* Reduce intensity since we're using indicator now */
-    opacity: 0.9;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
 }
 
 .notes-explorer-card-header-strip {
@@ -408,14 +405,6 @@
     z-index: 100;
 }
 
-.notes-explorer-card.notes-explorer-tab-highlight {
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px var(--interactive-accent-hover);
-    transform: scale(1.02);
-    z-index: 100;
-    transition: all 0.2s ease;
-}
-
 .notes-explorer-card-content {
     font-size: 12px;
     color: var(--text-muted);
@@ -493,20 +482,6 @@
 .notes-explorer-card-content.scrollable {
     overflow-y: auto;
     cursor: auto;
-}
-
-/* Drop indicator for precise drag feedback */
-.notes-explorer-drop-indicator {
-    position: absolute;
-    background-color: var(--interactive-accent);
-    pointer-events: none;
-    z-index: 1000;
-    box-shadow: 0 0 8px var(--interactive-accent);
-    transition: all 0.1s ease;
-}
-
-.notes-explorer-card-content.scrollable::after {
-    display: none; /* Hide fade when scrollable */
 }
 
 /* Custom scrollbar for cards */
@@ -711,47 +686,4 @@
     color: var(--interactive-accent);
 }
 
-/* Tab highlighting when hovering over corresponding card */
-.workspace-tab-header.notes-explorer-highlight {
-    background-color: var(--background-modifier-hover) !important;
-    position: relative;
-}
-
-.workspace-tab-header.notes-explorer-highlight::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background-color: var(--interactive-accent);
-    opacity: 0.7;
-    animation: pulse-highlight 1s ease-in-out infinite;
-}
-
-@keyframes pulse-highlight {
-    0%, 100% {
-        opacity: 0.5;
-    }
-    50% {
-        opacity: 1;
-    }
-}
-
 /* Custom scrollbar for horizontal scroll */
-.notes-explorer-cards-container::-webkit-scrollbar {
-    height: 10px;
-}
-
-.notes-explorer-cards-container::-webkit-scrollbar-track {
-    background: var(--background-secondary);
-}
-
-.notes-explorer-cards-container::-webkit-scrollbar-thumb {
-    background: var(--text-faint);
-    border-radius: 5px;
-}
-
-.notes-explorer-cards-container::-webkit-scrollbar-thumb:hover {
-    background: var(--text-muted);
-}
