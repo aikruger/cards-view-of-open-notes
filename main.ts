@@ -158,7 +158,6 @@ export class NotesExplorerView extends ItemView {
 	private toolbar: HTMLElement;
 	public transformContainer: HTMLElement;
 	private canvasWrapper: HTMLElement;
-	// Remove duplicate private zoomLevel; keep the public one below
 	private panX: number = 0;
 	private panY: number = 0;
 	private isDraggingCanvas: boolean = false;
@@ -175,8 +174,6 @@ export class NotesExplorerView extends ItemView {
 	public resizeObserver: ResizeObserver | null = null;  // Add resize observer
 	public stableCardOrder: Map<string, number> = new Map();  // Map of file.path -> order index
 	public orderCounter: number = 0;  // Counter for assigning stable order
-	public dropIndicator: HTMLElement | null = null;  // Drop position indicator
-	public dropPosition: string | null = null;  // 'top', 'right', 'bottom', 'left'
 	public manualColumns: number | null = null;  // null = auto, number = fixed columns
 	public cardWidth: number = 220;  // Base card width
 	public zoomLevel: number = 1.0;  // 1.0 = 100%, 0.5 = 50%, 1.5 = 150%, etc.
@@ -187,7 +184,6 @@ export class NotesExplorerView extends ItemView {
 	public searchQuery: string = '';  // Search query for filtering cards
 	public hiddenCards: Set<string> = new Set();  // Track hidden card paths
 	public customCardSizes: Map<string, {width: number, height: number}> = new Map(); // Map<filePath, {width, height}>
-	public tabObserver: MutationObserver | null = null;  // Observer for tab changes
 	private cardPositions: Map<string, CardPosition> = new Map();
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -396,9 +392,6 @@ export class NotesExplorerView extends ItemView {
 		// Make draggable
 		this.makeCardDraggable(card, file);
 
-		// Draggable attribute
-		card.setAttribute('draggable', 'true');
-
 		// Add stable order attribute for manual sorting
 		if (!this.stableCardOrder.has(file.path)) {
 			this.stableCardOrder.set(file.path, this.orderCounter++);
@@ -413,7 +406,6 @@ export class NotesExplorerView extends ItemView {
 
 		// Header
 		const header = card.createDiv({ cls: 'notes-explorer-card-header' });
-		// Header click should NOT change focus; visual header only
 
 		// Title
 		header.createDiv({
@@ -452,8 +444,6 @@ export class NotesExplorerView extends ItemView {
 			const fileContent = await this.app.vault.cachedRead(file);
 			await MarkdownRenderer.render(this.app, fileContent, content, file.path, component);
 			component.load();
-
-			// Layout reset removed - content rendering doesn't reset position
 		} catch (e) {
 			content.setText(`Error loading content: ${e}`);
 		}
@@ -527,101 +517,13 @@ export class NotesExplorerView extends ItemView {
 			this.draggedFile = null;
 			this.draggedLeaf = null;
 			this.cardsContainer.removeClass('card-dragging');
-			this.dropIndicator!.style.display = 'none';
-		});
-
-		card.addEventListener('dragover', (e: DragEvent) => {
-			e.preventDefault();
-			if (this.draggedCard && this.draggedCard !== card) {
-				const rect = card.getBoundingClientRect();
-				const x = e.clientX - rect.left;
-				const y = e.clientY - rect.top;
-
-				const dropThreshold = 0.25; // 25% of the card's dimension
-
-				// Default to horizontal (left/right) if card is wider than tall
-				let isWider = card.offsetWidth > card.offsetHeight;
-
-				if (x < rect.width * dropThreshold) {
-					this.dropPosition = 'left';
-					this.dropIndicator!.style.display = 'block';
-					this.dropIndicator!.style.left = `${card.offsetLeft}px`;
-					this.dropIndicator!.style.top = `${card.offsetTop}px`;
-					this.dropIndicator!.style.width = '4px';
-					this.dropIndicator!.style.height = `${card.offsetHeight}px`;
-				} else if (x > rect.width * (1 - dropThreshold)) {
-					this.dropPosition = 'right';
-					this.dropIndicator!.style.display = 'block';
-					this.dropIndicator!.style.left = `${card.offsetLeft + card.offsetWidth - 4}px`;
-					this.dropIndicator!.style.top = `${card.offsetTop}px`;
-					this.dropIndicator!.style.width = '4px';
-					this.dropIndicator!.style.height = `${card.offsetHeight}px`;
-				} else if (y < rect.height * dropThreshold) {
-					this.dropPosition = 'top';
-					this.dropIndicator!.style.display = 'block';
-					this.dropIndicator!.style.left = `${card.offsetLeft}px`;
-					this.dropIndicator!.style.top = `${card.offsetTop}px`;
-					this.dropIndicator!.style.width = `${card.offsetWidth}px`;
-					this.dropIndicator!.style.height = '4px';
-				} else if (y > rect.height * (1 - dropThreshold)) {
-					this.dropPosition = 'bottom';
-					this.dropIndicator!.style.display = 'block';
-					this.dropIndicator!.style.left = `${card.offsetLeft}px`;
-					this.dropIndicator!.style.top = `${card.offsetTop + card.offsetHeight - 4}px`;
-					this.dropIndicator!.style.width = `${card.offsetWidth}px`;
-					this.dropIndicator!.style.height = '4px';
-				} else {
-					this.dropPosition = null;
-					this.dropIndicator!.style.display = 'none';
-				}
-			}
-		});
-
-		card.addEventListener('drop', (e: DragEvent) => {
-			e.preventDefault();
-			e.stopPropagation();
-
-			if (this.draggedCard && this.draggedCard !== card) {
-				const draggedOrder = this.stableCardOrder.get(this.draggedFile!.path)!;
-				const targetOrder = this.stableCardOrder.get(file.path)!;
-
-				// Update order values for all affected cards
-				for (const [path, order] of this.stableCardOrder.entries()) {
-					if (draggedOrder < targetOrder) { // Dragged down
-						if (order > draggedOrder && order <= targetOrder) {
-							this.stableCardOrder.set(path, order - 1);
-						}
-					} else { // Dragged up
-						if (order < draggedOrder && order >= targetOrder) {
-							this.stableCardOrder.set(path, order + 1);
-						}
-					}
-				}
-
-				// Place the dragged card at the target position
-				this.stableCardOrder.set(this.draggedFile!.path, targetOrder);
-
-				// Update card order styles
-				this.cardsContainer.querySelectorAll('.notes-explorer-card').forEach((c: HTMLElement) => {
-					const path = c.dataset.path;
-					if (path && this.stableCardOrder.has(path)) {
-						c.style.order = (this.stableCardOrder.get(path) ?? 0).toString();
-					}
-				});
-
-				// Re-sort and re-layout
-				//this.updateCards();
-				requestAnimationFrame(() => this.layoutMasonryGrid());
-			}
-
-			this.dropIndicator!.style.display = 'none';
 		});
 
 		// Focus on click with debounce to allow dblclick detection
 		let clickTimer: number | null = null;
 		card.addEventListener('click', (e: MouseEvent) => {
 			if (clickTimer !== null) {
-				window.clearTimeout(clickTimer);
+			window.clearTimeout(clickTimer);
 				clickTimer = null;
 				return; // dblclick incoming; skip single-click
 			}
@@ -760,9 +662,6 @@ export class NotesExplorerView extends ItemView {
 		let startY = 0;
 		let initialX = 0;
 		let initialY = 0;
-		let isGroupDrag = false;
-		let groupMembers: string[] = [];
-		const groupInitialPositions = new Map<string, {x: number, y: number}>();
 
 		card.addEventListener('mousedown', (e: MouseEvent) => {
 			// Prevent dragging if clicking interactive elements
@@ -772,7 +671,6 @@ export class NotesExplorerView extends ItemView {
 
 			e.stopPropagation();
 			isDragging = true;
-			isGroupDrag = e.altKey;
 
 			let position = this.cardPositions.get(file.path);
 			// Initialize position if missing
@@ -792,23 +690,12 @@ export class NotesExplorerView extends ItemView {
 			startX = e.clientX / this.zoomLevel;
 			startY = e.clientY / this.zoomLevel;
 
-			// If Alt+drag and card is in a group, get all group members
-			if (isGroupDrag && position.groupId) {
-				groupMembers = Array.from(this.cardPositions.entries())
-					.filter(([_, pos]) => pos.groupId === position!.groupId)
-					.map(([path, _]) => path);
-
-				groupInitialPositions.clear();
-				groupMembers.forEach(path => {
-					const pos = this.cardPositions.get(path);
-					if (pos) {
-						groupInitialPositions.set(path, { x: pos.x, y: pos.y });
-					}
-				});
-			}
-
 			card.style.cursor = 'grabbing';
 			card.style.zIndex = '1000';
+			
+			// Add visual feedback
+			card.addClass('dragging');
+			this.cardsContainer.addClass('card-dragging');
 
 			document.addEventListener('mousemove', onMouseMove);
 			document.addEventListener('mouseup', onMouseUp);
@@ -821,40 +708,30 @@ export class NotesExplorerView extends ItemView {
 			const deltaX = (e.clientX / this.zoomLevel) - startX;
 			const deltaY = (e.clientY / this.zoomLevel) - startY;
 
-			if (isGroupDrag && groupMembers.length > 0) {
-				groupMembers.forEach(path => {
-					const pos = this.cardPositions.get(path);
-					const cardEl = this.transformContainer.querySelector(`[data-path="${path}"]`) as HTMLElement;
-					const initialPos = groupInitialPositions.get(path);
-					if (pos && cardEl && initialPos) {
-						pos.x = initialPos.x + deltaX;
-						pos.y = initialY + deltaY;
-						cardEl.style.left = pos.x + 'px';
-						cardEl.style.top = pos.y + 'px';
-					}
-				});
-			} else {
-				// Move single card
-				let position = this.cardPositions.get(file.path);
-				if (!position) {
-					position = {
-						file,
-						x: card.offsetLeft,
-						y: card.offsetTop,
-						width: card.offsetWidth || 300,
-						height: card.offsetHeight || 200,
-						groupId: undefined
-					};
-					this.cardPositions.set(file.path, position);
-				}
-				position.x = initialX + deltaX;
-				position.y = initialY + deltaY;
-				card.style.left = position.x + 'px';
-				card.style.top = position.y + 'px';
+			// Add drag threshold to prevent accidental tiny movements
+			const dragThreshold = 5; // pixels
+			const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+			
+			if (distance < dragThreshold) {
+				return; // Don't move until threshold exceeded
 			}
 
-			// Check for edge grouping indicators
-			this.checkEdgeProximity(card, e);
+			let position = this.cardPositions.get(file.path);
+			if (!position) {
+				position = {
+					file,
+					x: card.offsetLeft,
+					y: card.offsetTop,
+					width: card.offsetWidth || 300,
+					height: card.offsetHeight || 200,
+					groupId: undefined
+				};
+				this.cardPositions.set(file.path, position);
+			}
+			position.x = initialX + deltaX;
+			position.y = initialY + deltaY;
+			card.style.left = position.x + 'px';
+			card.style.top = position.y + 'px';
 		};
 
 		const onMouseUp = () => {
@@ -862,6 +739,11 @@ export class NotesExplorerView extends ItemView {
 				isDragging = false;
 				card.style.cursor = 'grab';
 				card.style.zIndex = '';
+				
+				// Remove visual feedback
+				card.removeClass('dragging');
+				this.cardsContainer.removeClass('card-dragging');
+				
 				this.saveCardPositions();
 			}
 			document.removeEventListener('mousemove', onMouseMove);
@@ -873,10 +755,6 @@ export class NotesExplorerView extends ItemView {
 		// This is where you would persist the card positions to a file or Obsidian's data store.
 		// For now, we'll just log them to the console.
 		console.log('Saving card positions:', this.cardPositions);
-	}
-
-	public checkEdgeProximity(card: HTMLElement, e: MouseEvent) {
-		// Placeholder for edge proximity check
 	}
 
 	public debouncedUpdate() {
@@ -1007,11 +885,6 @@ export class NotesExplorerView extends ItemView {
 	}
 
 	public async updateCards() {
-		// Clean up any lingering highlights
-		document.querySelectorAll('.notes-explorer-highlight').forEach((el) => {
-			el.removeClass('notes-explorer-highlight');
-		});
-
 		const openFiles = this.getOpenFiles();
 
 		if (openFiles.length === 0) {
@@ -1284,88 +1157,6 @@ export class NotesExplorerView extends ItemView {
 		modal.open();
 	}
 
-	public setupTabToCardHighlighting() {
-		// Use MutationObserver to detect new tabs being added
-		const observer = new MutationObserver(() => {
-			this.attachTabHoverListeners();
-		});
-		
-		observer.observe(document.body, {
-			childList: true,
-			subtree: true
-		});
-		
-		// Initial attachment
-		this.attachTabHoverListeners();
-		
-		// Store observer for cleanup
-		this.tabObserver = observer;
-	}
-
-	public attachTabHoverListeners() {
-		const tabHeaders = document.querySelectorAll('.workspace-tab-header');
-		
-		tabHeaders.forEach((tabHeader: Element) => {
-			const tabHeaderEl = tabHeader as HTMLElement;
-			
-			// Skip if already has listener
-			if (tabHeaderEl.hasAttribute('data-card-hover-attached')) return;
-			
-			tabHeaderEl.setAttribute('data-card-hover-attached', 'true');
-			
-			tabHeaderEl.addEventListener('mouseenter', () => {
-				this.highlightCorrespondingCard(tabHeaderEl, true);
-			});
-			
-			tabHeaderEl.addEventListener('mouseleave', () => {
-				this.highlightCorrespondingCard(tabHeaderEl, false);
-			});
-		});
-	}
-
-	public highlightCorrespondingCard(tabHeader: HTMLElement, highlight: boolean) {
-		try {
-			// Get file path from tab
-			const tabTitle = tabHeader.getAttribute('aria-label');
-			const innerTitle = tabHeader.querySelector('.workspace-tab-header-inner-title');
-			const fileName = tabTitle || (innerTitle ? innerTitle.textContent : null);
-			
-			if (!fileName) return;
-			
-			// Find corresponding card
-			const cards = this.cardsContainer.querySelectorAll('.notes-explorer-card');
-			
-			for (const card of Array.from(cards)) {
-				const cardTitle = card.querySelector('.notes-explorer-card-title')?.textContent;
-				
-				if (cardTitle && cardTitle === fileName) {
-					if (highlight) {
-						card.addClass('notes-explorer-tab-highlight');
-						// Scroll card into view
-						(card as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-					} else {
-						card.removeClass('notes-explorer-tab-highlight');
-					}
-					break;
-				}
-			}
-		} catch (error) {
-			console.warn('Could not highlight card:', error);
-		}
-	}
-
-	getViewType(): string {
-		return VIEW_TYPE_NOTES_EXPLORER;
-	}
-
-	getDisplayText(): string {
-		return 'Notes Explorer';
-	}
-
-	getIcon(): string {
-		return 'layout-grid';
-	}
-
 	async onOpen() {
 		console.log('=== Cards View Opening ===');
 		console.log('Window type:', this.leaf.getRoot() === (this.app.workspace as any).rootSplit ? 'main' : 'popout');
@@ -1405,15 +1196,11 @@ export class NotesExplorerView extends ItemView {
 		transformContainer.style.padding = '0';
 		transformContainer.style.backgroundColor = 'rgba(0,0,0,0.02)'; // debug background
 
-		this.dropIndicator = this.transformContainer.createDiv({ cls: 'notes-explorer-drop-indicator' });
-		this.dropIndicator.style.display = 'none';
-
 		// Call setup methods
 		this.setupResizeListener();
 		this.setupZoomControls();
 		this.setupCanvasPanning();
 		this.setupDropZone();
-		this.setupTabToCardHighlighting();
 
 		// Initialize with masonry layout to prevent card overlap
 		this.updateCards();
@@ -1423,11 +1210,6 @@ export class NotesExplorerView extends ItemView {
 	}
 	
 	async onClose() {
-		// Remove all tab highlights
-		document.querySelectorAll('.notes-explorer-highlight').forEach((el) => {
-			el.removeClass('notes-explorer-highlight');
-		});
-		
 		// Clean up all components
 		const contentEls = this.cardsContainer.querySelectorAll('.notes-explorer-card-content');
 		contentEls.forEach((contentEl: HTMLElement) => {
@@ -1445,11 +1227,6 @@ export class NotesExplorerView extends ItemView {
 		// Clean up resize observer
 		if (this.resizeObserver) {
 			this.resizeObserver.disconnect();
-		}
-		
-		// Clean up tab observer
-		if (this.tabObserver) {
-			this.tabObserver.disconnect();
 		}
 	}
 
@@ -1557,5 +1334,17 @@ export class NotesExplorerView extends ItemView {
 		const availableWidth = containerWidth / (this.zoomLevel * this.contentScale);
 		const columns = Math.max(1, Math.floor(availableWidth / (cardWidth + gap)));
 		return columns;
+	}
+
+	getViewType(): string {
+		return VIEW_TYPE_NOTES_EXPLORER;
+	}
+
+	getDisplayText(): string {
+		return 'Notes Explorer';
+	}
+
+	getIcon(): string {
+		return 'layout-grid';
 	}
 }
