@@ -1,10 +1,11 @@
 {
-	"id": "obsidian-notes-explorer",
-	"name": "Notes Explorer",
-	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "View and manage open notes as cards with drag-and-drop support",
-	"author": "aikruger",
-	"authorUrl": "https://github.com/aikruger",
-	"isDesktopOnly": false
+  "id": "open-tabs-canvas",
+  "name": "Open Tabs Canvas",
+  "version": "1.0.0",
+  "minAppVersion": "1.10.0",
+  "description": "Create a canvas visualization of all open tabs with double-click navigation",
+  "author": "Your Name",
+  "authorUrl": "https://yourwebsite.com",
+  "fundingUrl": "https://yourwebsite.com",
+  "isDesktopOnly": false
 }
