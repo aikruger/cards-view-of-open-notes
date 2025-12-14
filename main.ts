@@ -668,7 +668,7 @@ export class NotesExplorerView extends ItemView {
 
 	private makeCardDraggable(card: HTMLElement, file: TFile): void {
 		let isDragging = false;
-		let dragOccurred = false; // Add this flag
+		let dragOccurred = false;
 		let startX = 0;
 		let startY = 0;
 		let initialX = 0;
@@ -676,6 +676,7 @@ export class NotesExplorerView extends ItemView {
 		let isEdgeAttachMode = false;
 		let lastClientX = 0;
 		let lastClientY = 0;
+		let initialGroupPositions = new Map<string, { x: number, y: number }>(); // ← Move outside, declare once
 
 		card.addEventListener("mousedown", (e: MouseEvent) => {
 			if ((e.target as HTMLElement).closest(".card-close, .card-content")) {
@@ -684,7 +685,7 @@ export class NotesExplorerView extends ItemView {
 			e.stopPropagation();
 
 			isDragging = true;
-			dragOccurred = false; // Reset on new mousedown
+			dragOccurred = false;
 			isEdgeAttachMode = e.altKey;
 
 			let position = this.cardPositions.get(file.path);
@@ -702,10 +703,25 @@ export class NotesExplorerView extends ItemView {
 
 			initialX = position.x;
 			initialY = position.y;
-			startX = e.clientX / this.zoomLevel;
-			startY = e.clientY / this.zoomLevel;
+			
+			// Store RAW screen coordinates (don't divide!)
+			startX = e.clientX;
+			startY = e.clientY;
 			lastClientX = e.clientX;
 			lastClientY = e.clientY;
+
+			// Store INITIAL positions for ALL group members at start
+			initialGroupPositions = new Map();
+			const groupMembers = this.getGroupMembers(file.path);
+			groupMembers.forEach((memberPath: string) => {
+				const pos = this.cardPositions.get(memberPath);
+				if (pos) {
+					initialGroupPositions.set(memberPath, { 
+						x: pos.x, 
+						y: pos.y 
+					});
+				}
+			});
 
 			card.style.cursor = "grabbing";
 			card.style.zIndex = "1000";
@@ -728,52 +744,89 @@ export class NotesExplorerView extends ItemView {
 			lastClientX = e.clientX;
 			lastClientY = e.clientY;
 
-			const deltaX = e.clientX / this.zoomLevel - startX;
-			const deltaY = e.clientY / this.zoomLevel - startY;
-			const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+			// Calculate pure screen delta (movement on the screen)
+			const screenDeltaX = e.clientX - startX;
+			const screenDeltaY = e.clientY - startY;
 
-			if (distance > 5) { // Drag threshold
+			// Convert screen delta to container coordinate delta
+			// Divide by zoom to account for zoom scaling
+			const containerDeltaX = screenDeltaX / this.zoomLevel;
+			const containerDeltaY = screenDeltaY / this.zoomLevel;
+
+			// Calculate distance for drag threshold
+			const distance = Math.sqrt(screenDeltaX * screenDeltaX + screenDeltaY * screenDeltaY);
+
+			if (distance > 5) {
 				dragOccurred = true;
 			}
 
 			if (!dragOccurred) return;
 
+			// Move all cards in the group using stored initial positions
 			const groupMembers = this.getGroupMembers(file.path);
-			const initialGroupPositions = new Map<string, { x: number, y: number }>();
 
-			groupMembers.forEach(memberPath => {
-				const pos = this.cardPositions.get(memberPath);
-				if(pos) initialGroupPositions.set(memberPath, { x: pos.x, y: pos.y });
-			});
-
-
-			groupMembers.forEach(memberPath => {
+			groupMembers.forEach((memberPath: string) => {
 				const memberCard = this.transformContainer.querySelector(`[data-path="${memberPath}"]`) as HTMLElement;
 				const memberPosition = this.cardPositions.get(memberPath);
 				const initialPos = initialGroupPositions.get(memberPath);
 
 				if (memberCard && memberPosition && initialPos) {
-					memberPosition.x = initialPos.x + deltaX;
-					memberPosition.y = initialPos.y + deltaY;
+					// Apply the delta to the initial position
+					memberPosition.x = initialPos.x + containerDeltaX;
+					memberPosition.y = initialPos.y + containerDeltaY;
 					memberCard.style.left = memberPosition.x + "px";
 					memberCard.style.top = memberPosition.y + "px";
 				}
 			});
 
+			// Edge highlighting during Alt+drag
 			if (isEdgeAttachMode) {
-				const nearest = this.findNearestEdge(card, e.clientX, e.clientY, 50);
+				const nearest = this.findNearestEdge(card, e.clientX, e.clientY);
+				
 				if (nearest) {
 					if (this.edgeHighlight) {
 						this.edgeHighlight.className = `notes-explorer-edge-highlight ${nearest.edge}`;
-						const nearestRect = nearest.card.getBoundingClientRect();
-						// Position and show highlight... (code is unchanged, omitted for brevity)
-						this.edgeHighlight.style.display = 'block';
+						
+						const cardWidth = nearest.cardWidth || 300;
+						const cardHeight = nearest.cardHeight || 200;
+						const targetPos = nearest.cardPos;
 
+						switch (nearest.edge) {
+							case "top":
+								this.edgeHighlight.style.left = targetPos.x + "px";
+								this.edgeHighlight.style.top = (targetPos.y - 2) + "px";
+								this.edgeHighlight.style.width = cardWidth + "px";
+								this.edgeHighlight.style.height = "4px";
+								break;
+							case "bottom":
+								this.edgeHighlight.style.left = targetPos.x + "px";
+								this.edgeHighlight.style.top = (targetPos.y + cardHeight) + "px";
+								this.edgeHighlight.style.width = cardWidth + "px";
+								this.edgeHighlight.style.height = "4px";
+								break;
+							case "left":
+								this.edgeHighlight.style.left = (targetPos.x - 2) + "px";
+								this.edgeHighlight.style.top = targetPos.y + "px";
+								this.edgeHighlight.style.width = "4px";
+								this.edgeHighlight.style.height = cardHeight + "px";
+								break;
+							case "right":
+								this.edgeHighlight.style.left = (targetPos.x + cardWidth) + "px";
+								this.edgeHighlight.style.top = targetPos.y + "px";
+								this.edgeHighlight.style.width = "4px";
+								this.edgeHighlight.style.height = cardHeight + "px";
+								break;
+						}
+
+						this.edgeHighlight.style.display = "block";
+						nearest.card.classList.add("notes-explorer-tab-highlight");
 					}
-					nearest.card.classList.add('notes-explorer-tab-highlight');
 				} else {
-					if (this.edgeHighlight) this.edgeHighlight.style.display = 'none';
-					this.cardsContainer.querySelectorAll('.notes-explorer-tab-highlight').forEach(c => c.classList.remove('notes-explorer-tab-highlight'));
+					if (this.edgeHighlight) {
+						this.edgeHighlight.style.display = "none";
+					}
+					this.cardsContainer.querySelectorAll(".notes-explorer-tab-highlight")
+						.forEach((c) => c.classList.remove("notes-explorer-tab-highlight"));
 				}
 			}
 		};
@@ -788,8 +841,10 @@ export class NotesExplorerView extends ItemView {
 			this.cardsContainer.removeClass("card-dragging");
 
 			if (isEdgeAttachMode) {
-				if (dragOccurred) { // This was a drag
-					const nearest = this.findNearestEdge(card, lastClientX, lastClientY, 50);
+				// Alt key is held
+				if (dragOccurred) {
+					// Alt + Drag = snap to nearby edge
+					const nearest = this.findNearestEdge(card, lastClientX, lastClientY);
 					if (nearest) {
 						const targetPath = nearest.card.getAttribute('data-path');
 						if (targetPath) {
@@ -799,19 +854,26 @@ export class NotesExplorerView extends ItemView {
 							}
 						}
 					}
-				} else { // This was a click
-					if (this.cardConnections.has(file.path) && this.cardConnections.get(file.path).size > 0) {
+				} else {
+					// ✅ FIXED: Alt + Click (no drag) = disconnect
+					const connections = this.cardConnections.get(file.path);
+					if (connections && connections.size > 0) {
 						this.disconnectCard(file.path);
 						new Notice(`Disconnected card: ${file.basename}`);
 					}
 				}
-
-				if (this.edgeHighlight) {
-					this.edgeHighlight.remove();
-					this.edgeHighlight = null;
-				}
-				this.cardsContainer.querySelectorAll('.notes-explorer-tab-highlight').forEach(c => c.classList.remove('notes-explorer-tab-highlight'));
 			}
+			// If Alt NOT held, just save positions (normal drag)
+
+			// Clean up edge highlight
+			if (this.edgeHighlight) {
+				this.edgeHighlight.remove();
+				this.edgeHighlight = null;
+			}
+
+			this.cardsContainer
+				.querySelectorAll('.notes-explorer-tab-highlight')
+				.forEach((c) => c.classList.remove('notes-explorer-tab-highlight'));
 
 			this.saveCardPositions();
 
@@ -1290,7 +1352,7 @@ export class NotesExplorerView extends ItemView {
 		
 		// Clean up debounce timer
 		if (this.updateDebounceTimer !== null) {
-			window.clearTimeout(this.updateDebounceTimer);
+		window.clearTimeout(this.updateDebounceTimer);
 		}
 		
 		// Clean up resize observer
@@ -1419,40 +1481,91 @@ export class NotesExplorerView extends ItemView {
 
 	/**
 	 * Find nearest edge of a card to given coordinates
-	 * Returns { card: HTMLElement, edge: 'top'|'bottom'|'left'|'right', distance: number }
+	 * Accounts for pan/zoom transforms with zoom-adjusted threshold
 	 */
-	findNearestEdge(fromCard: HTMLElement, fromX: number, fromY: number, threshold = 50) {
-	  const cards = Array.from(this.cardsContainer.querySelectorAll('.notes-explorer-card'))
-	    .filter(card => card !== fromCard && !card.classList.contains('dragging'));
+	findNearestEdge(fromCard: HTMLElement, fromX: number, fromY: number, baseThreshold = 50): { card: HTMLElement, edge: string, distance: number, cardPos: CardPosition, cardWidth: number, cardHeight: number } | null {
+		const fromPath = fromCard.getAttribute("data-path");
+		const fromPos = fromPath ? this.cardPositions.get(fromPath) : null;
+		
+		if (!fromPos) return null;
 
-	  let nearest = null;
+		// Get the canvas/wrapper bounds
+		const canvasRect = this.canvasWrapper.getBoundingClientRect();
 
-	  cards.forEach((card: HTMLElement) => {
-	    const rect = card.getBoundingClientRect();
-	    const cardCenterX = rect.left + rect.width / 2;
-	    const cardCenterY = rect.top + rect.height / 2;
+		// Step 1: Convert screen coordinates to canvas-relative coordinates
+		const screenDeltaX = fromX - canvasRect.left;
+		const screenDeltaY = fromY - canvasRect.top;
 
-	    // Check distance to each edge
-	    const edges = {
-	      top: Math.abs(fromY - rect.top),
-	      bottom: Math.abs(fromY - rect.bottom),
-	      left: Math.abs(fromX - rect.left),
-	      right: Math.abs(fromX - rect.right)
-	    };
+		// Step 2: Reverse the transform: translate(panX, panY) scale(zoomLevel)
+		// Formula: (screenCoord - panOffset) / zoomLevel + scrollOffset
+		const scrollLeft = this.canvasWrapper.scrollLeft || 0;
+		const scrollTop = this.canvasWrapper.scrollTop || 0;
 
-	    for (const [edge, distance] of Object.entries(edges)) {
-	      if (distance < threshold && (!nearest || distance < nearest.distance)) {
-	        nearest = { card, edge, distance, rect };
-	      }
-	    }
-	  });
+		const containerX = (screenDeltaX - this.panX) / this.zoomLevel + scrollLeft;
+		const containerY = (screenDeltaY - this.panY) / this.zoomLevel + scrollTop;
 
-	  return nearest;
+		// ✅ FIXED: Scale threshold inversely with zoom
+		// At zoomLevel=1.0: threshold = 50/1.0 = 50px
+		// At zoomLevel=0.5: threshold = 50/0.5 = 100px (compensates for zoom out)
+		// At zoomLevel=1.5: threshold = 50/1.5 = 33px (compensates for zoom in)
+		const zoomAdjustedThreshold = baseThreshold / this.zoomLevel;
+
+		console.log("🔍 Edge Detection Debug:", {
+			screenCoords: { x: Math.round(fromX), y: Math.round(fromY) },
+			canvasRect: { left: Math.round(canvasRect.left), top: Math.round(canvasRect.top) },
+			screenDelta: { x: Math.round(screenDeltaX), y: Math.round(screenDeltaY) },
+			transform: { panX: this.panX, panY: this.panY, zoom: this.zoomLevel },
+			containerCoords: { x: Math.round(containerX), y: Math.round(containerY) },
+			scrollOffset: { left: scrollLeft, top: scrollTop },
+			threshold: { base: baseThreshold, adjusted: Math.round(zoomAdjustedThreshold) }
+		});
+
+		const cards = Array.from(this.cardsContainer.querySelectorAll(".notes-explorer-card"))
+			.filter((card) => card !== fromCard && !card.classList.contains("dragging"));
+
+		let nearest: { card: HTMLElement, edge: string, distance: number, cardPos: CardPosition, cardWidth: number, cardHeight: number } | null = null;
+		let minDistance = zoomAdjustedThreshold;
+
+		cards.forEach((card: Element) => {
+			const htmlCard = card as HTMLElement;
+			const cardPath = htmlCard.getAttribute("data-path");
+			const cardPos = cardPath ? this.cardPositions.get(cardPath) : null;
+			
+			if (!cardPos) return;
+
+			const cardWidth = cardPos.width || 300;
+			const cardHeight = cardPos.height || 200;
+
+			// Calculate edges in CONTAINER coordinate space
+			const edges = {
+				top: Math.abs(containerY - cardPos.y),
+				bottom: Math.abs(containerY - (cardPos.y + cardHeight)),
+				left: Math.abs(containerX - cardPos.x),
+				right: Math.abs(containerX - (cardPos.x + cardWidth))
+			};
+
+			// Find nearest edge
+			for (const [edge, distance] of Object.entries(edges)) {
+				if (distance < minDistance) {
+					minDistance = distance;
+					nearest = { 
+						card: htmlCard, 
+						edge, 
+						distance, 
+						cardPos,
+						cardWidth,
+						cardHeight
+					};
+				}
+			}
+		});
+
+		return nearest;
 	}
 
 	/**
 	 * Snap card to edge of target card
-	 * Positions dragged card adjacent to the target's edge
+	 * Positions dragged card adjacent to the target's edge using stored positions
 	 */
 	snapCardToEdge(draggedCard: HTMLElement, draggedFile: TFile, targetCard: HTMLElement, targetFile: TFile, edge: string) {
 	  const draggedPos = this.cardPositions.get(draggedFile.path);
@@ -1460,41 +1573,50 @@ export class NotesExplorerView extends ItemView {
 
 	  if (!draggedPos || !targetPos) return;
 
-	  const targetRect = targetCard.getBoundingClientRect();
-	  const draggedRect = draggedCard.getBoundingClientRect();
-
-	  // Calculate snap position based on edge
+	  // Use stored dimensions, not getBoundingClientRect()
+	  const draggedWidth = draggedPos.width || 300;
+	  const draggedHeight = draggedPos.height || 200;
+	  const targetWidth = targetPos.width || 300;
+	  const targetHeight = targetPos.height || 200;
+	  
 	  let newX = draggedPos.x;
 	  let newY = draggedPos.y;
-
-	  const containerRect = this.transformContainer.getBoundingClientRect();
+	  const gap = 10; // Small gap between cards
 
 	  switch(edge) {
-	    case 'top':
-	      newY = targetPos.y - (draggedRect.height / this.zoomLevel);
+	    case "top":
+	      // Place dragged card above target
+	      newY = targetPos.y - draggedHeight - gap;
 	      newX = targetPos.x; // Align left edges
 	      break;
-	    case 'bottom':
-	      newY = targetPos.y + (targetRect.height / this.zoomLevel);
+	    case "bottom":
+	      // Place dragged card below target
+	      newY = targetPos.y + targetHeight + gap;
 	      newX = targetPos.x;
 	      break;
-	    case 'left':
-	      newX = targetPos.x - (draggedRect.width / this.zoomLevel);
-	      newY = targetPos.y;
+	    case "left":
+	      // Place dragged card to the left of target
+	      newX = targetPos.x - draggedWidth - gap;
+	      newY = targetPos.y; // Align top edges
 	      break;
-	    case 'right':
-	      newX = targetPos.x + (targetRect.width / this.zoomLevel);
+	    case "right":
+	      // Place dragged card to the right of target
+	      newX = targetPos.x + targetWidth + gap;
 	      newY = targetPos.y;
 	      break;
 	  }
 
+	  // Update position
 	  draggedPos.x = newX;
 	  draggedPos.y = newY;
-	  draggedCard.style.left = newX + 'px';
-	  draggedCard.style.top = newY + 'px';
+	  draggedCard.style.left = newX + "px";
+	  draggedCard.style.top = newY + "px";
 
-	  // Create group connection
+	  // Create connection
 	  this.connectCards(draggedFile.path, targetFile.path);
+	  	
+	  // Provide feedback
+	  new Notice(`Connected: ${draggedFile.basename} to ${targetFile.basename}`);
 	}
 
 	/**
@@ -1510,8 +1632,11 @@ export class NotesExplorerView extends ItemView {
 	  }
 
 	  // Add bidirectional connections
-	  this.cardConnections.get(filePath1).add(filePath2);
-	  this.cardConnections.get(filePath2).add(filePath1);
+	  const connections1 = this.cardConnections.get(filePath1);
+	  const connections2 = this.cardConnections.get(filePath2);
+	  	
+	  if (connections1) connections1.add(filePath2);
+	  if (connections2) connections2.add(filePath1);
 
 	  // Find or create group
 	  let groupId = this.getGroupId(filePath1);
@@ -1526,8 +1651,12 @@ export class NotesExplorerView extends ItemView {
 	  if (!this.connectionGroups.has(groupId)) {
 	    this.connectionGroups.set(groupId, new Set());
 	  }
-	  this.connectionGroups.get(groupId).add(filePath1);
-	  this.connectionGroups.get(groupId).add(filePath2);
+	  	
+	  const group = this.connectionGroups.get(groupId);
+	  if (group) {
+	    group.add(filePath1);
+	    group.add(filePath2);
+	  }
 
 	  // Update UI
 	  this.updateCardConnectionUI(filePath1);
@@ -1606,7 +1735,7 @@ export class NotesExplorerView extends ItemView {
 	/**
 	 * Get all cards in same group for movement
 	 */
-	getGroupMembers(filePath: string) {
+	getGroupMembers(filePath: string): string[] {
 	  const groupId = this.getGroupId(filePath);
 	  if (!groupId) return [filePath];
 
